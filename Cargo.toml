@@ -1,0 +1,20 @@
+[package]
+name = "simple_impl_derive"
+version = "0.1.0"
+edition = "2024"
+
+license = "MIT OR Apache-2.0"
+description = "absolute gold"
+
+authors = ["James Hunt <jameshuntdevelopment@gmail.com>"]
+repository = "https://github.com/jameshuntt/simple_impl_derive"
+readme = "readme.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0.114", features = ["full", "extra-traits"] }
+quote = "1.0.44"
+proc-macro2 = "1.0.106"
+prettyplease = "0.2"
