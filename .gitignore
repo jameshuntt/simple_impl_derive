@@ -1,1 +1,5 @@
 /target
+/unused
+/.vscode
+.vscode
+.gitignore
