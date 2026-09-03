@@ -112,6 +112,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple_impl"
+version = "0.1.7"
+
+[[package]]
 name = "simple_impl_attr_kit"
 version = "0.2.0"
 dependencies = [
@@ -132,17 +136,18 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_derive"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "liaise",
  "prettyplease",
- "proc-macro-crate",
  "proc-macro2",
  "quote",
+ "simple_impl",
  "simple_impl_attr_kit",
  "simple_impl_core",
  "simple_impl_quote_kit",
  "syn 2.0.119",
+ "xccute_contract",
 ]
 
 [[package]]
@@ -221,3 +226,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "xccute_contract"
+version = "0.1.0"

@@ -1,29 +1,5 @@
-//! Derives that turn a struct into a command-line builder and the argument
-//! vector it produces.
-//!
-//! * [`SimpleBuilder`](derive@SimpleBuilder): `new()` and a setter per field,
-//!   shaped by `#[builder(...)]` (`required`, `into`, `opt`, `vec_iter`,
-//!   `default_expr`, ...).
-//! * [`SimpleShell`](derive@SimpleShell): a `ShellCommand` impl whose
-//!   `build()` assembles the argument vector from `#[shell(...)]` on each
-//!   field (`flag`, `opt_kv`, `arg_clone`, `multi_opt_kv`, `count_flag`,
-//!   `order`, ...).
-//! * [`SimpleImpl`](derive@SimpleImpl): both at once.
-//! * [`SimpleShellMode`](derive@SimpleShellMode): an enum whose selected
-//!   variant contributes one flag.
-//! * [`SimpleSubCommand`](derive@SimpleSubCommand), [`CompositeShell`](derive@CompositeShell),
-//!   [`CompositeSubCommand`](derive@CompositeSubCommand): commands made of
-//!   subcommands, with validation rules and an `xccute_policy`.
-//!
-//! Every attribute is parsed through
-//! [`simple_impl_attr_kit`](https://crates.io/crates/simple_impl_attr_kit)
-//! against a schema in one module, so an unknown key names the nearest known
-//! one, a key given twice or of the wrong kind is refused at the key, and the
-//! whole vocabulary is documented in one place. The README lists every key.
-//!
-//! The generated code expands to the macros of
-//! [`simple_impl`](https://crates.io/crates/simple_impl), and runs against
-//! the `ShellCommand` trait named by `trait_path`.
+#![doc = include_str!("../README.md")]
+#![forbid(unsafe_code)]
 
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
@@ -36,6 +12,7 @@ mod simple;
 mod simple_subcommand;
 mod xccute_policy;
 
+/// `new()` and a setter per field, shaped by `#[builder(...)]`.
 #[proc_macro_derive(SimpleBuilder, attributes(builder))]
 pub fn derive_simple_builder(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -45,6 +22,7 @@ pub fn derive_simple_builder(input: TokenStream) -> TokenStream {
     }
 }
 
+/// A `ShellCommand` impl whose `build()` joins the argument vector from `#[shell(...)]` on each field.
 #[proc_macro_derive(SimpleShell, attributes(shell))]
 pub fn derive_simple_shell(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -54,6 +32,7 @@ pub fn derive_simple_shell(input: TokenStream) -> TokenStream {
     }
 }
 
+/// `SimpleBuilder` and `SimpleShell` together.
 #[proc_macro_derive(SimpleImpl, attributes(builder, shell))]
 pub fn derive_simple_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -63,6 +42,7 @@ pub fn derive_simple_impl(input: TokenStream) -> TokenStream {
     }
 }
 
+/// An enum whose selected variant contributes one flag through a `#[shell(mode)]` field.
 #[proc_macro_derive(SimpleShellMode, attributes(shell))]
 pub fn derive_simple_shell_mode(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -73,6 +53,7 @@ pub fn derive_simple_shell_mode(input: TokenStream) -> TokenStream {
 }
 
 
+/// A leaf argv command under a root: `#[subcommand(segment = "..")]`, `#[arg(..)]` fields, validation rules, `#[xccute_policy(..)]`.
 #[proc_macro_derive(SimpleSubCommand, attributes(subcommand, builder, arg, validate, requires, invalid_without, only_pair_with, conflicts_with, one_of, at_least_one_of, xccute_policy))]
 pub fn derive_simple_subcommand(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -82,6 +63,7 @@ pub fn derive_simple_subcommand(input: TokenStream) -> TokenStream {
     }
 }
 
+/// A root program whose `#[composite(..)]` entries become methods returning rooted commands and surfaces.
 #[proc_macro_derive(CompositeShell, attributes(shell, composite))]
 pub fn derive_composite_shell(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -91,6 +73,7 @@ pub fn derive_composite_shell(input: TokenStream) -> TokenStream {
     }
 }
 
+/// A nested surface: a segment whose `#[composite(command = ..)]` entries become methods on the rooted surface.
 #[proc_macro_derive(CompositeSubCommand, attributes(subcommand, composite, xccute_policy))]
 pub fn derive_composite_subcommand(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

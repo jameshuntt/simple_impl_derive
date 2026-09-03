@@ -12,23 +12,8 @@ pub struct ParsedXccutePolicy {
 }
 
 pub fn parse_xccute_policy(input: &DeriveInput) -> syn::Result<ParsedXccutePolicy> {
-    let bag = simple_impl_attr_kit::AttrBag::from_attrs(&input.attrs, "xccute_policy")?;
-
-    for key in bag.keys() {
-        match key.as_str() {
-            "sensitive"
-            | "requires_sudo"
-            | "iam_scope"
-            | "path_role"
-            | "dry_run_default" => {}
-            other => {
-                return Err(syn::Error::new_spanned(
-                    input,
-                    format!("unsupported #[xccute_policy(...)] key `{other}`"),
-                ));
-            }
-        }
-    }
+    let bag = crate::vocabulary::xccute_policy()
+        .validate(&simple_impl_attr_kit::AttrBag::from_attrs(&input.attrs, "xccute_policy")?)?;
 
     Ok(ParsedXccutePolicy {
         sensitive: bag.flag("sensitive")?,

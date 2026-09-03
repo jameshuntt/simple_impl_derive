@@ -145,6 +145,21 @@ pub(crate) fn subcommand_arg() -> AttrSchema {
         .conflicts("kv", "positional")
 }
 
+/// `#[xccute_policy(...)]` on a SimpleSubCommand or CompositeSubCommand struct.
+pub(crate) fn xccute_policy() -> AttrSchema {
+    AttrSchema::new()
+        .optional("sensitive", K::Bool)
+        .doc("sensitive", "the command touches something an operator should look at twice")
+        .optional("requires_sudo", K::Bool)
+        .doc("requires_sudo", "the command needs elevated rights")
+        .optional("iam_scope", K::String)
+        .doc("iam_scope", "the IAM scope the command runs under")
+        .optional("path_role", K::String)
+        .doc("path_role", "the path role the command claims")
+        .optional("dry_run_default", K::Bool)
+        .doc("dry_run_default", "whether a dry run is the default (true when absent)")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,7 +175,7 @@ mod tests {
 
     #[test]
     fn every_schema_documents_every_key() {
-        for schema in [shell_struct(), shell_field(), builder_field(), shell_variant(), subcommand(), subcommand_builder(), subcommand_arg()] {
+        for schema in [shell_struct(), shell_field(), builder_field(), shell_variant(), subcommand(), subcommand_builder(), subcommand_arg(), xccute_policy()] {
             every_key_documented(&schema);
         }
     }
