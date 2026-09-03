@@ -1,5 +1,3 @@
 /target
-/unused
-/.vscode
-.vscode
-.gitignore
+**/target
+.DS_Store

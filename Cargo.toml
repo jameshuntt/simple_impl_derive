@@ -1,20 +1,27 @@
 [package]
 name = "simple_impl_derive"
-version = "0.1.1"
-edition = "2024"
-
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.70"
 license = "MIT OR Apache-2.0"
-description = "absolute gold"
-
-authors = ["James Hunt <jameshuntdevelopment@gmail.com>"]
+description = "Derives that turn a struct into a command-line builder and the argument vector it produces: SimpleBuilder, SimpleShell, SimpleImpl, SimpleShellMode, SimpleSubCommand, CompositeShell, CompositeSubCommand."
+authors = ["James Hunt <james@1o.business>"]
 repository = "https://github.com/jameshuntt/simple_impl_derive"
-readme = "readme.md"
+readme = "README.md"
+keywords = ["derive", "cli", "builder", "shell", "command"]
+categories = ["command-line-interface", "development-tools::procedural-macro-helpers"]
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2.0.114", features = ["full", "extra-traits"] }
-quote = "1.0.44"
-proc-macro2 = "1.0.106"
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
 prettyplease = "0.2"
+proc-macro-crate = "3"
+liaise = { version = "0.1.6", features = ["std", "syn-error"] }
+simple_impl_attr_kit = { version = "0.2.0", path = "../simple_impl_attr_kit" }
+simple_impl_core = { version = "0.2.0", path = "../simple_impl_core" }
+simple_impl_quote_kit = { version = "0.2.0", path = "../simple_impl_quote_kit" }
