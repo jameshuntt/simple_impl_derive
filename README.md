@@ -102,6 +102,14 @@ struct Tool {
     #[builder(skip)]
     #[shell(arg_expr = "format!(\"x{}\", self.pid)", order = 19)]
     marker: (),
+
+    // value shaping: fmt wraps each value, join collapses a Vec into one argument
+    #[builder(push, method = "header")]
+    #[shell(multi_opt_kv = "-H", fmt = "'{}'", order = 20)]
+    headers: Vec<String>,
+    #[builder(vec_iter)]
+    #[shell(multi_arg_flag = "--features", join = ",", order = 21)]
+    features: Vec<String>,
 }
 
 let cmd = Tool::new()
@@ -122,18 +130,41 @@ let cmd = Tool::new()
     .pid(4)
     .maybe("M")
     .host("h")
-    .port(80);
+    .port(80)
+    .header("A: 1")
+    .header("B: 2")
+    .features(["x".to_string(), "y".to_string()]);
 
 assert_eq!(
     cmd.build(),
-    "tool run --on --no-check -vvv -n 7 -s:sock --user=bob --level 2 -L=L1 --mode=fast \
-     -e A=1 -e B=2 -I/x -I/y --tags web prod --color=never P 4 M h:80 x4"
-        .replace("-L=L1", "-LL1")
+    "tool run --on --no-check -vvv -n 7 -s:sock --user=bob --level 2 -LL1 --mode=fast \
+     -e A=1 -e B=2 -I/x -I/y --tags web prod --color=never P 4 M h:80 x4 \
+     -H 'A: 1' -H 'B: 2' --features x,y"
 );
 
 // nothing set: only what is always present
 let quiet = Tool::new().action("run").path("P").pid(4).host("h").label("L1").mode_name("fast");
 assert_eq!(quiet.build(), "tool run --no-check --level 0 -LL1 --mode=fast --color=auto P 4 h x4");
+```
+
+## Shell strings: a program chosen at build time
+
+```rust
+use simple_impl::ShellCommand;
+use simple_impl_derive::SimpleImpl;
+
+#[derive(Debug, Clone, Default, SimpleImpl)]
+#[shell(cmd_expr = "if self.sudo { \"sudo nano\" } else { \"nano\" }")]
+struct Nano {
+    #[builder(flag)]
+    sudo: bool,                 // no #[shell]: read by cmd_expr, never pushed
+    #[builder(required, into)]
+    #[shell(arg_clone)]
+    file: String,
+}
+
+assert_eq!(Nano::new("notes.md").build(), "nano notes.md");
+assert_eq!(Nano::new("notes.md").sudo().build(), "sudo nano notes.md");
 ```
 
 ## Shell strings: the builder keys
@@ -415,6 +446,7 @@ wrong kind of value, is refused at the key.
 | key | meaning |
 |---|---|
 | `cmd = "name"` | the program name, the first entry of the command |
+| `cmd_expr = "expr"` | the program name as an expression on `self`, instead of `cmd` |
 | `trait_path = "::my::Trait"` | the trait to implement; default `::simple_impl::ShellCommand` |
 | `require_order` | every emitted field must carry an `order` |
 
@@ -432,10 +464,13 @@ wrong kind of value, is refused at the key.
 | `multi_opt_kv = "-e"` | `-e value` repeated for every element of a `Vec` |
 | `multi_opt_prefix = "-I"` | `-Ivalue` repeated for every element of a `Vec` |
 | `multi_arg_flag = "--tags"` | the flag once, then every element of a `Vec` |
-| `positional`, `arg` | the field's value as a bare argument (an `Option` only when `Some`) |
+| `positional`, `arg` | the field's value as a bare argument; an `Option` only when `Some`, a `Vec` as one argument per element |
 | `arg_clone`, `arg_display` | positional, pushed by clone or by `to_string` |
 | `arg_expr = "expr"` | positional, pushed as the expression's `to_string` |
+| `opt_expr = "expr"` | positional, pushed as `v.to_string()` when the expression is `Some(v)` |
 | `arg_join_opt = "other"`, `sep = ":"` | positional joined with the named `Option` field when it is `Some` |
+| `fmt = "'{}'"` | a format string with one `{}` applied to each value before it is pushed; for the kv, multi and positional kinds |
+| `join = ","` | collapse a `Vec` into one argument: `multi_arg_flag = "--features", join = ","` gives `--features a,b` |
 | `mode` | the field is an enum deriving `SimpleShellMode` |
 | `subcommand` | the field is the subcommand word |
 | `order = 3` / `"first"` / `"last"` / `"before:field"` / `"after:field"` | where the field lands in the command |
@@ -454,8 +489,9 @@ The flag pushed when that variant is selected. A variant without one pushes noth
 | `init_only` | set by the constructor or `default_expr`, no setter |
 | `init_required` | a constructor argument with no setter |
 | `default_expr = "expr"` | the expression `new()` initialises the field with |
+| `method = "name"` | the setter's name, when not the field's |
 | `flag`, `opt`, `opt_into`, `set`, `set_into`, `vec_into`, `vec_iter` | the setter kind |
-| `push` | reserved; refused with `BUILDER(3001)` |
+| `push` | the setter kind that appends one element to a `Vec<T>`, taking `impl Into<T>` |
 
 ### `SimpleSubCommand`
 

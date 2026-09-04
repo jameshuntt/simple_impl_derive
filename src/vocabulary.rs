@@ -16,6 +16,9 @@ pub(crate) fn shell_struct() -> AttrSchema {
         .doc("trait_path", "path of the ShellCommand trait to implement, as a string")
         .optional("require_order", K::Bool)
         .doc("require_order", "every emitted field must carry an `order`")
+        .optional("cmd_expr", K::String)
+        .doc("cmd_expr", "the program name as an expression on `self`, instead of `cmd`: cmd_expr = \"if self.sudo { \\\"sudo nano\\\" } else { \\\"nano\\\" }\"")
+        .conflicts("cmd", "cmd_expr")
 }
 
 /// `#[shell(...)]` on a field.
@@ -59,10 +62,17 @@ pub(crate) fn shell_field() -> AttrSchema {
         .doc("arg_display", "positional, pushed by to_string")
         .optional("arg_expr", K::String)
         .doc("arg_expr", "positional, pushed as the given expression's to_string")
+        .optional("opt_expr", K::String)
+        .doc("opt_expr", "positional, pushed as v.to_string() when the given expression is Some(v)")
         .optional("arg_join_opt", K::String)
         .doc("arg_join_opt", "positional joined with the named Option field when it is Some")
         .optional("sep", K::String)
         .doc("sep", "the separator for `arg_join_opt`; the derive checks the pairing (SHELL(1002))")
+        // value shaping
+        .optional("fmt", K::String)
+        .doc("fmt", "a format string with one `{}`, applied to each value before it is pushed: fmt = \"'{}'\" gives -H 'value'")
+        .optional("join", K::String)
+        .doc("join", "join a Vec's elements with this separator into one argument: multi_arg_flag = \"--features\", join = \",\" gives --features a,b")
         // shape
         .optional("mode", K::Bool)
         .doc("mode", "the field is an enum deriving SimpleShellMode; its variant's flag is pushed")
@@ -89,6 +99,8 @@ pub(crate) fn builder_field() -> AttrSchema {
         .doc("init_required", "a constructor argument with no setter")
         .optional("default_expr", K::String)
         .doc("default_expr", "the expression `new()` initialises the field with")
+        .optional("method", K::String)
+        .doc("method", "the setter's name, when not the field's")
         .optional("flag", K::Bool)
         .doc("flag", "setter kind: `fn field(self) -> Self` setting a bool")
         .optional("opt", K::Bool)
@@ -104,7 +116,7 @@ pub(crate) fn builder_field() -> AttrSchema {
         .optional("vec_iter", K::Bool)
         .doc("vec_iter", "setter kind: `fn field(self, impl IntoIterator<Item = T>)`")
         .optional("push", K::Bool)
-        .doc("push", "setter kind: push one element; the derive checks kinds against `init_required` and `default_expr` (BUILDER(3002), BUILDER(3003))")
+        .doc("push", "setter kind: `fn field(self, impl Into<T>)` pushing one element onto a Vec<T>; the derive checks kinds against `init_required` and `default_expr` (BUILDER(3002), BUILDER(3003))")
 }
 
 /// The setter kinds of [`builder_field`], in the order the last one written wins.

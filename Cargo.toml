@@ -1,6 +1,6 @@
 [package]
 name = "simple_impl_derive"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.70"
 license = "MIT OR Apache-2.0"
@@ -22,8 +22,8 @@ proc-macro2 = "1"
 prettyplease = "0.2"
 liaise = { version = "0.1.6", features = ["std", "syn-error"] }
 simple_impl_attr_kit = { version = "0.2.0", path = "../simple_impl_attr_kit" }
-simple_impl_core = { version = "0.2.0", path = "../simple_impl_core" }
-simple_impl_quote_kit = { version = "0.2.0", path = "../simple_impl_quote_kit" }
+simple_impl_core = { version = "0.3.0", path = "../simple_impl_core" }
+simple_impl_quote_kit = { version = "0.3.0", path = "../simple_impl_quote_kit" }
 
 [dev-dependencies]
 simple_impl = { path = "../simple_impl" }

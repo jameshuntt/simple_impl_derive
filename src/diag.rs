@@ -48,7 +48,12 @@ pub(crate) enum E {
     MultipleSubcommands,
 
     ArgCloneRequiresString,
-    
+
+    FmtOnWrongKind,
+    FmtNeedsOnePlaceholder,
+    JoinOnWrongKind,
+    PushRequiresVec,
+
     Unmatched
 }
 
@@ -83,6 +88,10 @@ impl E {
             E::MultipleSubcommands => "SHELL(1018): multiple #[shell(subcommand)] fields; only one is supported",
 
             E::ArgCloneRequiresString => "SHELL(1019): #[shell(arg_clone)] is only valid for String or Option<String>",
+            E::FmtOnWrongKind => "SHELL(1020): #[shell(fmt = \"...\")] applies to kv, opt_kv, multi_opt_kv, multi_arg_flag and positional fields; prefix, eq, flag and count kinds shape their own value",
+            E::FmtNeedsOnePlaceholder => "SHELL(1021): #[shell(fmt = \"...\")] needs exactly one `{}`",
+            E::JoinOnWrongKind => "SHELL(1022): #[shell(join = \"...\")] applies to multi_arg_flag, multi_opt_kv and a positional Vec",
+            E::PushRequiresVec => "SHELL(3004): #[builder(push)] requires a Vec<T> field",
             
             E::OrderTargetUnknown => "SHELL(2001): order target references unknown (or non-emitted) field",
             E::OrderCaseCollision => "SHELL(2002): case-insensitive order target collision; use exact field names",

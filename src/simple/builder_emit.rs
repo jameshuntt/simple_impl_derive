@@ -57,7 +57,11 @@ pub(super) fn expand_builder_impl(input: &DeriveInput, fields: &[FieldInfo]) -> 
         if f.builder.skip_setter {
             return None;
         }
-        let method = &f.ident;
+        let method_ident = match &f.builder.method {
+            Some(name) => ::quote::format_ident!("{}", name),
+            None => f.ident.clone(),
+        };
+        let method = &method_ident;
         let field = &f.ident;
         let ty = &f.ty;
 
@@ -143,12 +147,14 @@ pub(super) fn expand_builder_impl(input: &DeriveInput, fields: &[FieldInfo]) -> 
                 }
             }
             BuilderKind::Push => {
-                // keep it explicit later; for now: emit a compile error so you don’t silently get the wrong API.
-                let msg = format!(
-                    "builder(push) for field `{}` requires a dedicated naming scheme; implement this next (e.g. #[builder(push_name=\"push_{}\")] )",
-                    field, field
-                );
-                quote! { ::core::compile_error!(#msg); }
+                let inner = type_vec_inner(ty).expect("Push kind requires Vec<T>; checked at parse");
+                quote! {
+                    #[inline]
+                    pub fn #method(mut self, value: impl ::core::convert::Into<#inner>) -> Self {
+                        self.#field.push(value.into());
+                        self
+                    }
+                }
             }
         })
     });

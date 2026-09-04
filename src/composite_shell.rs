@@ -13,7 +13,9 @@ pub fn expand_composite_shell(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     let program = parse_shell_program(input)?;
     let entries = parse_composite_entries(input)?;
-    let quote_spec = CompositeShellQuote::new(input.ident.clone(), program, entries);
+    let declared_fields: Vec<syn::Ident> = entries.iter().filter_map(|e| e.field.clone()).collect();
+    let quote_spec = CompositeShellQuote::new(input.ident.clone(), program, entries.into_iter().map(|e| e.quote).collect())
+        .with_declared_fields(declared_fields);
 
     Ok(emit_composite_shell_root_impls(&quote_spec))
 }
@@ -38,20 +40,26 @@ fn parse_shell_program(input: &DeriveInput) -> syn::Result<String> {
     bag.require_str("program").map(ToOwned::to_owned)
 }
 
-fn parse_composite_entries(input: &DeriveInput) -> syn::Result<Vec<CompositeShellEntryQuote>> {
+struct ParsedEntry {
+    field: Option<syn::Ident>,
+    quote: CompositeShellEntryQuote,
+}
+
+fn parse_composite_entries(input: &DeriveInput) -> syn::Result<Vec<ParsedEntry>> {
     let mut entries = Vec::new();
 
     for attr in input.attrs.iter().filter(|attr| attr.path().is_ident("composite")) {
         let entry = CompositeEntry::from_registry_attr(attr)?.ok_or_else(|| {
             syn::Error::new_spanned(attr, "expected #[composite(command = \"...\", ty = SomeType)]")
         })?;
-        entries.push(entry_to_quote(entry)?);
+        entries.push(ParsedEntry { field: None, quote: entry_to_quote(entry)? });
     }
 
     if let Data::Struct(syn::DataStruct { fields: Fields::Named(named), .. }) = &input.data {
         for field in &named.named {
             if let Some(entry) = CompositeEntry::from_field(field)? {
-                entries.push(entry_to_quote(entry)?);
+                let declared = entry.field.clone();
+                entries.push(ParsedEntry { field: declared, quote: entry_to_quote(entry)? });
             }
         }
     }

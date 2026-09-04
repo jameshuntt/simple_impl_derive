@@ -14,6 +14,7 @@ pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStre
 
     let segment = parse_subcommand_segment(input)?;
     let entries = parse_surface_entries(input)?;
+    let declared_fields: Vec<Ident> = entries.iter().filter_map(|e| e.field.clone()).collect();
     let command_specs = entries
         .into_iter()
         .map(|entry| entry_to_command_quote(entry, &input.ident))
@@ -24,7 +25,8 @@ pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStre
         input.vis.clone(),
         segment,
         command_specs,
-    );
+    )
+    .with_declared_fields(declared_fields);
 
     let contract_impls = emit_composite_surface_impls(&quote_spec);
     let policy = parse_xccute_policy(input)?;

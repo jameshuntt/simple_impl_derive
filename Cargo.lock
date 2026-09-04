@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl"
-version = "0.1.7"
+version = "0.1.8"
 
 [[package]]
 name = "simple_impl_attr_kit"
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_derive"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "liaise",
  "prettyplease",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_quote_kit"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",

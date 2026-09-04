@@ -52,6 +52,9 @@ pub(super) fn parse_struct_and_fields(input: &DeriveInput) -> Result<(ShellCfg, 
             return Err(diag::err_spanned(f, E::InitOnlyConflictKind));
         }
 
+        if matches!(bcfg.kind, Some(BuilderKind::Push)) && type_vec_inner(&ty).is_none() {
+            return Err(diag::err_spanned(&ident, E::PushRequiresVec));
+        }
         // If no explicit builder kind, infer something sane.
         if bcfg.kind.is_none() && !bcfg.skip_setter {
             bcfg.kind = Some(infer_builder_kind(&ty, &bcfg));
@@ -84,6 +87,11 @@ pub(super) fn parse_shell_struct_attrs(attrs: &[Attribute], cfg: &mut ShellCfg) 
         let path: Path = syn::parse_str(trait_path).map_err(|e| Error::new(span, format!("trait_path is not a path: {e}")))?;
         cfg.trait_path = Some(path);
     }
+    if let Some(expr) = bag.optional_str("cmd_expr")? {
+        let span = bag.span_of("cmd_expr").unwrap_or_else(Span::call_site);
+        let ts: TokenStream2 = syn::parse_str(expr).map_err(|e| Error::new(span, format!("cmd_expr parse error: {e}")))?;
+        cfg.cmd_expr = Some(ts);
+    }
     cfg.require_order = bag.flag("require_order")?;
     Ok(())
 }
@@ -91,7 +99,7 @@ pub(super) fn parse_shell_struct_attrs(attrs: &[Attribute], cfg: &mut ShellCfg) 
 pub(super) fn parse_shell_field_attrs(attrs: &[Attribute], cfg: &mut ShellFieldCfg) -> Result<(), Error> {
     let bag = vocabulary::shell_field().validate(&AttrBag::from_attrs(attrs, "shell")?)?;
 
-    let strings: [(&str, &mut Option<String>); 13] = [
+    let strings: [(&str, &mut Option<String>); 15] = [
         ("flag", &mut cfg.flag),
         ("flag_off", &mut cfg.flag_off),
         ("count_flag", &mut cfg.count_flag),
@@ -105,6 +113,8 @@ pub(super) fn parse_shell_field_attrs(attrs: &[Attribute], cfg: &mut ShellFieldC
         ("multi_opt_prefix", &mut cfg.multi_opt_prefix),
         ("multi_arg_flag", &mut cfg.multi_arg_flag),
         ("sep", &mut cfg.arg_join_sep),
+        ("fmt", &mut cfg.fmt),
+        ("join", &mut cfg.join),
     ];
     for (key, slot) in strings {
         if let Some(value) = bag.optional_str(key)? {
@@ -131,6 +141,12 @@ pub(super) fn parse_shell_field_attrs(attrs: &[Attribute], cfg: &mut ShellFieldC
         let ts: TokenStream2 = syn::parse_str(expr).map_err(|e| Error::new(span, format!("arg_expr parse error: {e}")))?;
         cfg.positional = true;
         cfg.arg_expr = Some(ts);
+    }
+    if let Some(expr) = bag.optional_str("opt_expr")? {
+        let span = bag.span_of("opt_expr").unwrap_or_else(Span::call_site);
+        let ts: TokenStream2 = syn::parse_str(expr).map_err(|e| Error::new(span, format!("opt_expr parse error: {e}")))?;
+        cfg.positional = true;
+        cfg.opt_expr = Some(ts);
     }
     if let Some(other) = bag.optional_str("arg_join_opt")? {
         cfg.positional = true;
@@ -181,6 +197,7 @@ pub(super) fn parse_builder_field_attrs(attrs: &[Attribute], cfg: &mut BuilderCf
         cfg.required = true;
     }
     cfg.into = bag.flag("into")?;
+    cfg.method = bag.optional_str("method")?.map(ToOwned::to_owned);
     if bag.flag("skip")? {
         cfg.skip_setter = true;
     }

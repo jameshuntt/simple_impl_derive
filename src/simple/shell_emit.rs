@@ -8,11 +8,16 @@ pub(super) fn expand_shell_impl(
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let cmd = shell_struct
-        .cmd
-        .as_ref()
-        .ok_or_else(|| Error::new(input.span(), "missing #[shell(cmd = \"...\")] on struct"))?;
-    let cmd_lit = LitStr::new(cmd, input.span());
+    let cmd_init: TokenStream2 = match (&shell_struct.cmd, &shell_struct.cmd_expr) {
+        (Some(cmd), _) => {
+            let cmd_lit = LitStr::new(cmd, input.span());
+            quote! { #cmd_lit.to_string() }
+        }
+        (None, Some(expr)) => quote! { (#expr).to_string() },
+        (None, None) => {
+            return Err(Error::new(input.span(), "missing #[shell(cmd = \"...\")] or #[shell(cmd_expr = \"...\")] on struct"))
+        }
+    };
 
     let trait_path: Path = match &shell_struct.trait_path {
         Some(p) => p.clone(),
@@ -99,12 +104,75 @@ pub(super) fn expand_shell_impl(
         }
     }
 
+    /// `(v).to_string()`, or `format!(fmt, v)` when the field carries `fmt`.
+    fn value_tokens(f: &FieldInfo, v: TokenStream2) -> TokenStream2 {
+        match &f.shell.fmt {
+            Some(fmt) => {
+                let fmt_lit = LitStr::new(fmt, f.ident.span());
+                quote! { ::std::format!(#fmt_lit, #v) }
+            }
+            None => quote! { (#v).to_string() },
+        }
+    }
+
+    /// `(v).clone()`, or `format!(fmt, v)` when the field carries `fmt`.
+    fn clone_tokens(f: &FieldInfo, v: TokenStream2) -> TokenStream2 {
+        match &f.shell.fmt {
+            Some(fmt) => {
+                let fmt_lit = LitStr::new(fmt, f.ident.span());
+                quote! { ::std::format!(#fmt_lit, #v) }
+            }
+            None => quote! { (#v).clone() },
+        }
+    }
+
+    /// The four value shapes every emitter pushes, for the field at hand.
+    fn shapes(f: &FieldInfo) -> (TokenStream2, TokenStream2, TokenStream2, TokenStream2) {
+        let fid = &f.ident;
+        (
+            value_tokens(f, quote! { v }),
+            clone_tokens(f, quote! { v }),
+            value_tokens(f, quote! { self.#fid }),
+            clone_tokens(f, quote! { self.#fid }),
+        )
+    }
+
+    /// `parts.push(<elements joined by `join`>)`, with `fmt` applied per element.
+    fn joined_tokens(f: &FieldInfo, list: TokenStream2, join: &str) -> TokenStream2 {
+        let join_lit = LitStr::new(join, f.ident.span());
+        let per = value_tokens(f, quote! { v });
+        quote! {
+            parts.push((#list).iter().map(|v| #per).collect::<::std::vec::Vec<::std::string::String>>().join(#join_lit));
+        }
+    }
+
     fn emit_positional_tokens(
         f: &FieldInfo,
         by_name: &HashMap<String, (&Ident, &Type)>,
     ) -> Result<TokenStream2, Error> {
         let field = &f.ident;
         let ty = &f.ty;
+        let (_vt, _vc, _vs, _vsc) = shapes(f);
+
+        // 0) a Vec joined into one argument
+        if let (Some(join), Some(_)) = (&f.shell.join, type_vec_inner(ty)) {
+            let push = joined_tokens(f, quote! { self.#field }, join);
+            return Ok(quote! { if !self.#field.is_empty() { #push } });
+        }
+
+        // 0.1) a Vec without join: every element is its own argument
+        if type_vec_inner(ty).is_some() && f.shell.arg_expr.is_none() && f.shell.opt_expr.is_none() && f.shell.arg_join_opt_with.is_none() {
+            return Ok(quote! { for v in &self.#field { parts.push(#_vt); } });
+        }
+
+        // 0.5) opt_expr: pushed only when the expression is Some
+        if let Some(expr) = &f.shell.opt_expr {
+            return Ok(quote! {
+                if let ::core::option::Option::Some(v) = (#expr) {
+                    parts.push(#_vt);
+                }
+            });
+        }
 
         // 1) arg_expr escape hatch
         if let Some(expr) = &f.shell.arg_expr {
@@ -162,19 +230,19 @@ pub(super) fn expand_shell_impl(
             Ok(match mode {
                 PosMode::Clone => quote! {
                     if let ::core::option::Option::Some(v) = &self.#field {
-                        parts.push(v.clone());
+                        parts.push(#_vc);
                     }
                 },
                 PosMode::Display => quote! {
                     if let ::core::option::Option::Some(v) = &self.#field {
-                        parts.push(v.to_string());
+                        parts.push(#_vt);
                     }
                 },
             })
         } else {
             Ok(match mode {
-                PosMode::Clone => quote! { parts.push(self.#field.clone()); },
-                PosMode::Display => quote! { parts.push(self.#field.to_string()); },
+                PosMode::Clone => quote! { parts.push(#_vsc); },
+                PosMode::Display => quote! { parts.push(#_vs); },
             })
         }
     }
@@ -229,16 +297,18 @@ pub(super) fn expand_shell_impl(
                 errs.push_spanned(f.ident.clone(), E::RequireOrderMissing);
             }
 
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
             // Emit unconditional positional push:
             // String => clone push, others => to_string push
-            let field = &f.ident;
             let tokens = if type_is_string(&f.ty) {
-                quote! { parts.push(self.#field.clone()); }
+                quote! { parts.push(#_vsc); }
             } else {
-                quote! { parts.push(self.#field.to_string()); }
+                quote! { parts.push(#_vs); }
             };
 
             let (base, rel) = base_order(f, ORD_POS_TAIL);
+
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -250,6 +320,28 @@ pub(super) fn expand_shell_impl(
             });
 
             continue;
+        }
+
+        // fmt shapes a pushed value; kinds that build their own token refuse it
+        if f.shell.fmt.is_some()
+            && (f.shell.flag.is_some() || f.shell.flag_off.is_some() || f.shell.count_flag.is_some()
+                || f.shell.prefix.is_some() || f.shell.opt_prefix.is_some() || f.shell.multi_opt_prefix.is_some()
+                || f.shell.eq.is_some() || f.shell.opt_eq.is_some()
+                || f.shell.arg_join_opt_with.is_some() || f.shell.arg_expr.is_some() || f.shell.opt_expr.is_some())
+        {
+            errs.push_spanned(f.ident.clone(), E::FmtOnWrongKind);
+        }
+        if let Some(fmt) = &f.shell.fmt {
+            if fmt.matches("{}").count() != 1 {
+                errs.push_spanned(f.ident.clone(), E::FmtNeedsOnePlaceholder);
+            }
+        }
+        if f.shell.join.is_some()
+            && f.shell.multi_arg_flag.is_none()
+            && f.shell.multi_opt_kv.is_none()
+            && !(f.shell.positional && f.shell.arg_expr.is_none() && f.shell.opt_expr.is_none() && f.shell.arg_join_opt_with.is_none() && type_vec_inner(&f.ty).is_some())
+        {
+            errs.push_spanned(f.ident.clone(), E::JoinOnWrongKind);
         }
 
         // Hygiene: exactly one emission kind per field
@@ -316,6 +408,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
 
             let tokens = emit_positional_tokens(f, &by_name)?;
             let (base, rel) = base_order(f, ORD_SUBCMD);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
             items.push(EmitItem {
                 name: f.ident.to_string(),
                 base,
@@ -330,6 +423,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
         if f.shell.is_mode {
             let field = &f.ident;
             let (base, rel) = base_order(f, ORD_FLAG);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
             let tokens = if type_option_inner(&f.ty).is_some() {
                 quote! {
                     if let ::core::option::Option::Some(v) = &self.#field {
@@ -364,6 +458,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
             let field = &f.ident;
             let ch_lit = LitStr::new(ch, f.ident.span());
             let (base, rel) = base_order(f, ORD_FLAG);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -389,12 +484,31 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_KV);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
+
+            if let Some(join) = &f.shell.join {
+                let tokens = if type_vec_inner(&f.ty).is_some() {
+                    let push = joined_tokens(f, quote! { self.#field }, join);
+                    quote! { if !self.#field.is_empty() { parts.push(#flag_lit.to_string()); #push } }
+                } else if type_option_vec_inner(&f.ty).is_some() {
+                    let push = joined_tokens(f, quote! { list }, join);
+                    quote! {
+                        if let ::core::option::Option::Some(list) = &self.#field {
+                            if !list.is_empty() { parts.push(#flag_lit.to_string()); #push }
+                        }
+                    }
+                } else {
+                    return Err(diag::err_spanned(&f.ident, E::MultiArgFlagRequiresVec));
+                };
+                items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
+                continue;
+            }
 
             let tokens = if type_vec_inner(&f.ty).is_some() {
                 quote! {
                     for v in &self.#field {
                         parts.push(#flag_lit.to_string());
-                        parts.push(v.to_string());
+                        parts.push(#_vt);
                     }
                 }
             } else if type_option_vec_inner(&f.ty).is_some() {
@@ -402,7 +516,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                     if let ::core::option::Option::Some(list) = &self.#field {
                         for v in list {
                             parts.push(#flag_lit.to_string());
-                            parts.push(v.to_string());
+                            parts.push(#_vt);
                         }
                     }
                 }
@@ -421,6 +535,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
             let field = &f.ident;
             let prefix_lit = LitStr::new(prefix, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_PREFIX);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             let tokens = if type_vec_inner(&f.ty).is_some() {
                 quote! {
@@ -451,13 +566,32 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_KV);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
+
+            if let Some(join) = &f.shell.join {
+                let tokens = if type_vec_inner(&f.ty).is_some() {
+                    let push = joined_tokens(f, quote! { self.#field }, join);
+                    quote! { if !self.#field.is_empty() { parts.push(#flag_lit.to_string()); #push } }
+                } else if type_option_vec_inner(&f.ty).is_some() {
+                    let push = joined_tokens(f, quote! { list }, join);
+                    quote! {
+                        if let ::core::option::Option::Some(list) = &self.#field {
+                            if !list.is_empty() { parts.push(#flag_lit.to_string()); #push }
+                        }
+                    }
+                } else {
+                    return Err(diag::err_spanned(&f.ident, E::MultiArgFlagRequiresVec));
+                };
+                items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
+                continue;
+            }
 
             let tokens = if type_vec_inner(&f.ty).is_some() {
                 quote! {
                     if !self.#field.is_empty() {
                         parts.push(#flag_lit.to_string());
                         for v in &self.#field {
-                            parts.push(v.to_string());
+                            parts.push(#_vt);
                         }
                     }
                 }
@@ -467,7 +601,7 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                         if !list.is_empty() {
                             parts.push(#flag_lit.to_string());
                             for v in list {
-                                parts.push(v.to_string());
+                                parts.push(#_vt);
                             }
                         }
                     }
@@ -496,6 +630,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
 
             let field = &f.ident;
             let (base, rel) = base_order(f, ORD_FLAG);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             let tokens = match (&f.shell.flag, &f.shell.flag_off) {
                 (Some(on), Some(off)) => {
@@ -528,6 +663,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_KV);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -538,7 +674,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
                 tokens: quote! {
                     if let ::core::option::Option::Some(v) = &self.#field {
                         parts.push(#flag_lit.to_string());
-                        parts.push(v.to_string());
+                        parts.push(#_vt);
                     }
                 },
             });
@@ -549,18 +685,19 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_KV);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             let tokens = if type_option_inner(&f.ty).is_some() {
                 quote! {
                     if let ::core::option::Option::Some(v) = &self.#field {
                         parts.push(#flag_lit.to_string());
-                        parts.push(v.to_string());
+                        parts.push(#_vt);
                     }
                 }
             } else {
                 quote! {
                     parts.push(#flag_lit.to_string());
-                    parts.push(self.#field.to_string());
+                    parts.push(#_vs);
                 }
             };
 
@@ -579,6 +716,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let prefix_lit = LitStr::new(prefix, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_PREFIX);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -599,6 +737,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let prefix_lit = LitStr::new(prefix, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_PREFIX);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             let tokens = if type_option_inner(&f.ty).is_some() {
                 quote! {
@@ -627,6 +766,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_EQ);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -647,6 +787,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
             let field = &f.ident;
             let flag_lit = LitStr::new(flag, f.ident.span());
             let (base, rel) = base_order(f, ORD_OPT_EQ);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             let tokens = if type_option_inner(&f.ty).is_some() {
                 quote! {
@@ -674,6 +815,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
         if f.shell.positional {
             let pos_tokens = emit_positional_tokens(f, &by_name)?;
             let (base, rel) = base_order(f, ORD_POS);
+            let (_vt, _vc, _vs, _vsc) = shapes(f);
 
             items.push(EmitItem {
                 name: f.ident.to_string(),
@@ -793,7 +935,7 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
         impl #impl_generics #trait_path for #name #ty_generics #where_clause {
             fn build(&self) -> ::std::string::String {
                 let mut parts: ::std::vec::Vec<::std::string::String> =
-                    ::std::vec![#cmd_lit.to_string()];
+                    ::std::vec![#cmd_init];
 
                 #(#emitted)*
 
