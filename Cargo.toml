@@ -10,7 +10,7 @@ repository = "https://github.com/jameshuntt/simple_impl_derive"
 readme = "README.md"
 keywords = ["derive", "cli", "builder", "shell", "command"]
 categories = ["command-line-interface", "development-tools::procedural-macro-helpers"]
-include = ["src/**", "Cargo.toml", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+include = ["src/**", "Cargo.toml", "CHANGELOG.md", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
 
 [lib]
 proc-macro = true

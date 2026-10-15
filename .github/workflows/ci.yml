@@ -75,6 +75,12 @@ jobs:
             404) echo "$name $version is new; publishing."; echo "publish=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "crates.io answered $status for $name $version"; exit 1 ;;
           esac
+      - name: CHANGELOG.md has an entry for this version
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          # every release says why, with links to the lines: no entry, no publish
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          grep -qF "## $version (" CHANGELOG.md || { echo "CHANGELOG.md has no '## $version (date)' entry; write it first"; exit 1; }
       - uses: rust-lang/crates-io-auth-action@v1
         if: steps.check.outputs.publish == 'true'
         id: auth
