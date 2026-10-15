@@ -795,3 +795,110 @@ fn the_same_bad_function_path_on_two_fields_is_two_messages() {
     assert!(errs[0].contains("in #[validate(with)] on `a`"), "{errs:#?}");
     assert!(errs[1].contains("in #[validate(with)] on `b`"), "{errs:#?}");
 }
+
+fn expansion(input: DeriveInput) -> String {
+    expand(&input, ExpandMode::Both).unwrap().to_string()
+}
+
+#[test]
+fn expressions_written_as_code_expand_exactly_like_strings() {
+    let as_strings: DeriveInput = parse_quote! {
+        #[shell(cmd_expr = "if self.v { \"a\" } else { \"b\" }")]
+        struct X {
+            v: bool,
+            #[shell(arg_expr = "self.n + 1")] a: u8,
+            #[shell(opt_expr = "self.o.as_ref()")] b: u8,
+            #[builder(default_expr = "Some(3)")] o: Option<u8>,
+            n: u8,
+        }
+    };
+    let as_code: DeriveInput = parse_quote! {
+        #[shell(cmd_expr = if self.v { "a" } else { "b" })]
+        struct X {
+            v: bool,
+            #[shell(arg_expr = self.n + 1)] a: u8,
+            #[shell(opt_expr = self.o.as_ref())] b: u8,
+            #[builder(default_expr = Some(3))] o: Option<u8>,
+            n: u8,
+        }
+    };
+    assert_eq!(expansion(as_strings), expansion(as_code));
+}
+
+#[test]
+fn order_written_as_keys_expands_exactly_like_the_strings() {
+    let as_strings: DeriveInput = parse_quote! {
+        #[shell(cmd = "x")]
+        struct X {
+            #[shell(flag = "-a", order = "after:b")] a: bool,
+            #[shell(flag = "-b", order = "first")] b: bool,
+            #[shell(flag = "-c", order = "last")] c: bool,
+            #[shell(flag = "-d", order = "before:a")] d: bool,
+        }
+    };
+    let as_keys: DeriveInput = parse_quote! {
+        #[shell(cmd = "x")]
+        struct X {
+            #[shell(flag = "-a", order(after = b))] a: bool,
+            #[shell(flag = "-b", order(first))] b: bool,
+            #[shell(flag = "-c", order(last))] c: bool,
+            #[shell(flag = "-d", order(before = "a"))] d: bool,
+        }
+    };
+    assert_eq!(expansion(as_strings), expansion(as_keys));
+}
+
+#[test]
+fn a_key_that_is_not_an_expression_and_a_bad_order_form_are_coded() {
+    let input: DeriveInput = parse_quote! {
+        #[shell(cmd = "x")]
+        struct X {
+            #[shell(arg_expr(1))] a: u8,
+            #[shell(flag = "-b", order(sideways))] b: bool,
+            #[shell(flag = "-c", order(before = a::b))] c: bool,
+            #[shell(flag = "-d", order(before = x, after = y))] d: bool,
+        }
+    };
+    assert_eq!(codes(input), ["SHELL1023", "SHELL1006", "SHELL1006", "SHELL1006"]);
+}
+
+#[test]
+fn code_that_starts_with_a_number_or_compares_reads_whole_and_expands_like_the_string() {
+    let as_strings: DeriveInput = parse_quote! {
+        #[shell(cmd = "x", require_order)]
+        struct X {
+            #[shell(arg_expr = "2 * self.n", order = 1)] a: u8,
+            #[shell(arg_expr = "self.n < self.m", order = 2)] b: u8,
+            #[shell(arg_expr = "self.n << 1", order = 3)] c: u8,
+            n: u8,
+            m: u8,
+        }
+    };
+    let as_code: DeriveInput = parse_quote! {
+        #[shell(cmd = "x", require_order)]
+        struct X {
+            #[shell(arg_expr = 2 * self.n, order = 1)] a: u8,
+            #[shell(arg_expr = self.n < self.m, order = 2)] b: u8,
+            #[shell(arg_expr = self.n << 1, order = 3)] c: u8,
+            n: u8,
+            m: u8,
+        }
+    };
+    assert_eq!(expansion(as_strings), expansion(as_code));
+}
+
+#[test]
+fn a_syntax_error_in_code_and_a_repeated_order_target_are_reported() {
+    let input: DeriveInput = parse_quote! {
+        #[shell(cmd = "x")]
+        struct X {
+            #[shell(arg_expr = self.n +)] a: u8,
+            #[shell(flag = "-b", order(before = a, before = c))] b: bool,
+            n: u8,
+        }
+    };
+    let errs = errors(input);
+    assert_eq!(errs.len(), 2, "{errs:#?}");
+    assert!(errs[0].contains("expected an expression") || errs[0].contains("unexpected end of input"), "{errs:#?}");
+    assert!(errs[1].starts_with("[SHELL1006]"), "{errs:#?}");
+}

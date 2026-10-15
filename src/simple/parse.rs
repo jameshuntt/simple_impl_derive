@@ -20,6 +20,9 @@ pub(super) struct Parsed {
     /// `order = ...` unreadable (the rest of `#[shell]` was read): the field is
     /// still checked, but not reported again for a missing order.
     pub order_failed: HashSet<String>,
+    /// Where an `order(before = x)` / `order(after = x)` target was written,
+    /// by field, so a target that names nothing is reported on the name.
+    pub order_target_spans: HashMap<String, Span>,
 }
 
 /// step 1
@@ -55,6 +58,7 @@ pub(super) fn parse_struct_and_fields(input: &DeriveInput, mode: ExpandMode, err
     let mut builder_failed = HashSet::new();
     let mut shell_failed = HashSet::new();
     let mut order_failed = HashSet::new();
+    let mut order_target_spans = HashMap::new();
     let mut builder_unread = HashSet::new();
 
     for (i, f) in fields_named.named.iter().enumerate() {
@@ -85,8 +89,14 @@ pub(super) fn parse_struct_and_fields(input: &DeriveInput, mode: ExpandMode, err
         // a bad `order` leaves the rest of #[shell] read: the field is still
         // checked, and only the order checks pass over it
         if let Some(bag) = &shell_bag {
-            if errs.absorb(parse_shell_field_order(bag, &mut scfg)).is_none() {
-                order_failed.insert(ident.to_string());
+            match errs.absorb(parse_shell_field_order(bag, &mut scfg)) {
+                Some(Some(span)) => {
+                    order_target_spans.insert(ident.to_string(), span);
+                }
+                Some(None) => {}
+                None => {
+                    order_failed.insert(ident.to_string());
+                }
             }
         }
 
@@ -137,7 +147,7 @@ pub(super) fn parse_struct_and_fields(input: &DeriveInput, mode: ExpandMode, err
         });
     }
 
-    Some(Parsed { shell_struct, fields, builder_failed, shell_failed, cmd_known, order_failed, builder_unread })
+    Some(Parsed { shell_struct, fields, builder_failed, shell_failed, cmd_known, order_failed, order_target_spans, builder_unread })
 }
 
 /// The method a `method = "..."` name makes: the identifier the compiler
@@ -185,9 +195,8 @@ pub(super) fn parse_shell_struct_attrs(attrs: &[Attribute], cfg: &mut ShellCfg, 
         cfg.trait_path = errs.absorb(syn::parse_str::<Path>(trait_path).map_err(|e| Error::new(span, format!("trait_path is not a path: {e}"))));
     }
     let mut cmd_known = true;
-    if let Some(expr) = errs.absorb(bag.optional_str("cmd_expr")).flatten() {
-        let span = bag.span_of("cmd_expr").unwrap_or_else(Span::call_site);
-        cfg.cmd_expr = errs.absorb(syn::parse_str::<TokenStream2>(expr).map_err(|e| Error::new(span, format!("cmd_expr parse error: {e}"))));
+    if let Some(expr) = read_expr(&bag, "cmd_expr", errs) {
+        cfg.cmd_expr = expr;
         cmd_known = cfg.cmd_expr.is_some() || cfg.cmd.is_some();
     }
     cmd_known
@@ -239,19 +248,15 @@ pub(super) fn parse_shell_field_keys(bag: &AttrBag, cfg: &mut ShellFieldCfg, err
     cfg.is_mode = bag.flag("mode")?;
     cfg.subcommand = bag.flag("subcommand")?;
 
-    if let Some(expr) = bag.optional_str("arg_expr")? {
-        let span = bag.span_of("arg_expr").unwrap_or_else(Span::call_site);
+    if let Some(expr) = read_expr(bag, "arg_expr", errs) {
         cfg.positional = true;
         // written but unparsable: a stand-in keeps it present for the other
         // checks; nothing is generated once anything was reported
-        let parsed = errs.absorb(syn::parse_str::<TokenStream2>(expr).map_err(|e| Error::new(span, format!("arg_expr parse error: {e}"))));
-        cfg.arg_expr = Some(parsed.unwrap_or_default());
+        cfg.arg_expr = Some(expr.unwrap_or_default());
     }
-    if let Some(expr) = bag.optional_str("opt_expr")? {
-        let span = bag.span_of("opt_expr").unwrap_or_else(Span::call_site);
+    if let Some(expr) = read_expr(bag, "opt_expr", errs) {
         cfg.positional = true;
-        let parsed = errs.absorb(syn::parse_str::<TokenStream2>(expr).map_err(|e| Error::new(span, format!("opt_expr parse error: {e}"))));
-        cfg.opt_expr = Some(parsed.unwrap_or_default());
+        cfg.opt_expr = Some(expr.unwrap_or_default());
     }
     if let Some(other) = bag.optional_str("arg_join_opt")? {
         cfg.positional = true;
@@ -261,42 +266,107 @@ pub(super) fn parse_shell_field_keys(bag: &AttrBag, cfg: &mut ShellFieldCfg, err
     Ok(())
 }
 
-/// `order = N`, or "first" / "last" / "before:FIELD" / "after:FIELD".
-fn parse_shell_field_order(bag: &AttrBag, cfg: &mut ShellFieldCfg) -> Result<(), Error> {
-    if let Some(value) = bag.get("order") {
-        let span = bag.span_of("order").unwrap_or_else(Span::call_site);
-        match value {
-            AttrValue::Int(n) => {
-                let v = i32::try_from(*n).map_err(|_| Error::new(span, format!("order {n} does not fit an i32")))?;
-                cfg.order = Some(ShellOrder::Key(v));
-            }
-            AttrValue::Str(raw) => {
-                let raw_trim = raw.trim();
-                let norm = raw_trim.to_ascii_lowercase();
-                cfg.order = Some(match norm.as_str() {
-                    "first" => ShellOrder::First,
-                    "last" => ShellOrder::Last,
-                    _ if norm.starts_with("before:") => {
-                        let target = raw_trim.split_once(':').map(|(_, t)| t).unwrap_or("").trim();
-                        if target.is_empty() {
-                            return Err(diag::err_at(span, E::OrderBeforeMissingTarget));
-                        }
-                        ShellOrder::Before(target.to_string())
+/// `order = N`, or "first" / "last" / "before:FIELD" / "after:FIELD", or
+/// `order(first)`, `order(last)`, `order(before = FIELD)`, `order(after = FIELD)`.
+/// For the `order(...)` form with a target, returns where the target was
+/// written, so a target that names nothing is reported on the name.
+fn parse_shell_field_order(bag: &AttrBag, cfg: &mut ShellFieldCfg) -> Result<Option<Span>, Error> {
+    let Some(value) = bag.get("order") else { return Ok(None) };
+    let span = bag.span_of("order").unwrap_or_else(Span::call_site);
+    match value {
+        AttrValue::Int(n) => {
+            let v = i32::try_from(*n).map_err(|_| Error::new(span, format!("order {n} does not fit an i32")))?;
+            cfg.order = Some(ShellOrder::Key(v));
+        }
+        AttrValue::Str(raw) => {
+            let raw_trim = raw.trim();
+            let norm = raw_trim.to_ascii_lowercase();
+            cfg.order = Some(match norm.as_str() {
+                "first" => ShellOrder::First,
+                "last" => ShellOrder::Last,
+                _ if norm.starts_with("before:") => {
+                    let target = raw_trim.split_once(':').map(|(_, t)| t).unwrap_or("").trim();
+                    if target.is_empty() {
+                        return Err(diag::err_at(span, E::OrderBeforeMissingTarget));
                     }
-                    _ if norm.starts_with("after:") => {
-                        let target = raw_trim.split_once(':').map(|(_, t)| t).unwrap_or("").trim();
-                        if target.is_empty() {
-                            return Err(diag::err_at(span, E::OrderAfterMissingTarget));
-                        }
-                        ShellOrder::After(target.to_string())
+                    ShellOrder::Before(target.to_string())
+                }
+                _ if norm.starts_with("after:") => {
+                    let target = raw_trim.split_once(':').map(|(_, t)| t).unwrap_or("").trim();
+                    if target.is_empty() {
+                        return Err(diag::err_at(span, E::OrderAfterMissingTarget));
                     }
-                    _ => return Err(diag::err_at(span, E::InvalidOrderValue)),
-                });
+                    ShellOrder::After(target.to_string())
+                }
+                _ => return Err(diag::err_at(span, E::InvalidOrderValue)),
+            });
+        }
+        // order(first), order(last), order(before = FIELD), order(after = FIELD)
+        AttrValue::Nested(inner) => {
+            let keys: Vec<&String> = inner.keys().collect();
+            let [key] = keys.as_slice() else { return Err(diag::err_at(span, E::InvalidOrderValue)) };
+            let key = key.as_str();
+            let flag = matches!(inner.get(key), Some(AttrValue::Bool(true)));
+            match key {
+                "first" if flag => cfg.order = Some(ShellOrder::First),
+                "last" if flag => cfg.order = Some(ShellOrder::Last),
+                "before" | "after" => {
+                    let at = inner.span_of(key).unwrap_or(span);
+                    // one target: order(before = b, before = c) is refused, not cut to b
+                    if matches!(inner.get(key), Some(AttrValue::List(_))) {
+                        return Err(diag::err_at(at, E::InvalidOrderValue));
+                    }
+                    let (target, target_span) = order_target(inner, key).ok_or_else(|| diag::err_at(at, E::InvalidOrderValue))?;
+                    cfg.order = Some(if key == "before" { ShellOrder::Before(target) } else { ShellOrder::After(target) });
+                    return Ok(Some(target_span));
+                }
+                _ => return Err(diag::err_at(span, E::InvalidOrderValue)),
             }
-            _ => return Err(diag::err_at(span, E::InvalidOrderType)),
+        }
+        _ => return Err(diag::err_at(span, E::InvalidOrderType)),
+    }
+    Ok(None)
+}
+
+/// The field `order(before = x)` names: one identifier as written (or a
+/// string), with where it was written.
+fn order_target(inner: &AttrBag, key: &str) -> Option<(String, Span)> {
+    let written = inner.written_tokens(key)?;
+    let mut tokens = written.clone().into_iter();
+    match (tokens.next(), tokens.next()) {
+        (Some(proc_macro2::TokenTree::Ident(ident)), None) => Some((ident.to_string(), ident.span())),
+        _ => {
+            let target = inner.get(key)?.as_str()?.trim();
+            (!target.is_empty()).then(|| (target.to_owned(), written.clone().into_iter().next().map_or_else(Span::call_site, |t| t.span())))
         }
     }
-    Ok(())
+}
+
+/// `key = <expression>`, written as code or as a string. `None` when the key
+/// is not written. `Some(None)` when it is written but is not an expression
+/// (reported into `errs`). Code is emitted with the tokens as written, so an
+/// error the compiler finds inside it points at the attribute; a string is
+/// parsed as before.
+fn read_expr(bag: &AttrBag, key: &str, errs: &mut SynBuffer) -> Option<Option<TokenStream2>> {
+    let value = bag.get(key)?;
+    let span = bag.span_of(key).unwrap_or_else(Span::call_site);
+    let expr = match value {
+        AttrValue::Str(text) => syn::parse_str::<TokenStream2>(text).map_err(|e| Error::new(span, format!("{key} parse error: {e}"))),
+        // code: checked here, so a syntax error is reported on the token
+        // where it is, not at the derive; emitted as written
+        _ => match bag.written_tokens(key) {
+            Some(tokens) => syn::parse2::<syn::Expr>(tokens.clone()).map(|_| tokens.clone()).map_err(|e| {
+                // an expression cut short ends past its last token, which syn
+                // reports at the derive; put it on the last token written
+                match tokens.clone().into_iter().last() {
+                    Some(last) if e.to_string().starts_with("unexpected end of input") => Error::new(last.span(), e.to_string()),
+                    _ => e,
+                }
+            }),
+            None => Err(diag::err_at_ctx(span, E::ExprNotWritten, format!("`{key}`"))),
+        },
+    };
+    Some(errs.absorb(expr))
 }
 
 /// A field's `#[builder(...)]`. A default_expr that does not parse is reported
@@ -335,11 +405,9 @@ pub(super) fn parse_builder_field_attrs(attrs: &[Attribute], cfg: &mut BuilderCf
             });
         }
     }
-    if let Some(expr) = bag.optional_str("default_expr")? {
-        let span = bag.span_of("default_expr").unwrap_or_else(Span::call_site);
-        let parsed = errs.absorb(syn::parse_str::<TokenStream2>(expr).map_err(|e| Error::new(span, format!("default_expr parse error: {e}"))));
+    if let Some(expr) = read_expr(&bag, "default_expr", errs) {
         // written but unparsable: a stand-in keeps it present; nothing is generated
-        cfg.default_expr = Some(parsed.unwrap_or_default());
+        cfg.default_expr = Some(expr.unwrap_or_default());
     }
     Ok(())
 }

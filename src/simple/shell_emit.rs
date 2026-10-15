@@ -915,7 +915,9 @@ pub(super) fn expand_shell_impl(
                 let Some(j) = resolve_target(target) else {
                     let lower = target.to_ascii_lowercase();
                     if !failed_targets.contains(&lower) && !ambiguous.contains(&lower) {
-                        errs.push_at_ctx(items[i].span, E::OrderTargetUnknown, format!("`{target}`"));
+                        // on the name when it was written as order(before = name)
+                        let at = parsed.order_target_spans.get(&items[i].name).copied().unwrap_or(items[i].span);
+                        errs.push_at_ctx(at, E::OrderTargetUnknown, format!("`{target}`"));
                     }
                     continue;
                 };

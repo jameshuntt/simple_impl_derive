@@ -18,8 +18,8 @@ liaise_proc_macro::liaise_codes! {
         RequireOrderMissing = 1003 => "missing #[shell(order = ...)] (struct has #[shell(require_order)])",
         OrderOnNonEmitted = 1004 => "#[shell(order=...)] provided but this field is not emitted",
         ArgJoinUnknownField = 1005 => "arg_join_opt references unknown field",
-        InvalidOrderValue = 1006 => "order must be an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\"",
-        InvalidOrderType = 1007 => "order must be an integer or a string",
+        InvalidOrderValue = 1006 => "order must be an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\", or order(first), order(last), order(before = FIELD), order(after = FIELD)",
+        InvalidOrderType = 1007 => "order must be an integer, a string or order(...)",
         OptKvRequiresOption = 1010 => "#[shell(opt_kv = \"...\")] requires Option<T>",
         OptPrefixRequiresOption = 1011 => "#[shell(opt_prefix = \"...\")] requires Option<T>",
         OptEqRequiresOption = 1012 => "#[shell(opt_eq = \"...\")] requires Option<T>",
@@ -33,6 +33,7 @@ liaise_proc_macro::liaise_codes! {
         FmtOnWrongKind = 1020 => "#[shell(fmt = \"...\")] applies to kv, opt_kv, multi_opt_kv, multi_arg_flag and positional fields; prefix, eq, flag and count kinds shape their own value",
         FmtNeedsOnePlaceholder = 1021 => "#[shell(fmt = \"...\")] needs exactly one `{}`",
         JoinOnWrongKind = 1022 => "#[shell(join = \"...\")] applies to multi_arg_flag, multi_opt_kv and a positional Vec",
+        ExprNotWritten = 1023 => "this key takes an expression, written as code (key = self.n + 1) or as a string (key = \"self.n + 1\")",
 
         // 2xxx: ordering
         OrderTargetUnknown = 2001 => "order target references unknown (or non-emitted) field",

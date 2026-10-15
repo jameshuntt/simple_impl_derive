@@ -442,12 +442,20 @@ Every attribute is parsed against one schema. A misspelt key is refused at
 the key and names the nearest known one; a key given twice, or given the
 wrong kind of value, is refused at the key.
 
+An expression key (`cmd_expr`, `arg_expr`, `opt_expr`, `default_expr`) takes the
+expression written as code, `arg_expr = self.n + 1`, or as a string,
+`arg_expr = "self.n + 1"`. Written as code, an error the compiler finds inside
+it points at the attribute; a string can only point at the derive. Code with a
+comma at the top level (a closure's `|a, b|`) goes in a string.
+`order(before = field)` names the field as an identifier, so a field that does
+not exist is reported on the name.
+
 ### `#[shell(...)]` on a struct (`SimpleShell`, `SimpleImpl`)
 
 | key | meaning |
 |---|---|
 | `cmd = "name"` | the program name, the first entry of the command |
-| `cmd_expr = "expr"` | the program name as an expression on `self`, instead of `cmd` |
+| `cmd_expr = expr` or `cmd_expr = "expr"` | the program name as an expression on `self`, instead of `cmd` |
 | `trait_path = "::my::Trait"` | the trait to implement; default `::simple_impl::ShellCommand` |
 | `require_order` | every emitted field must carry an `order` |
 
@@ -467,14 +475,14 @@ wrong kind of value, is refused at the key.
 | `multi_arg_flag = "--tags"` | the flag once, then every element of a `Vec` |
 | `positional`, `arg` | the field's value as a bare argument; an `Option` only when `Some`, a `Vec` as one argument per element |
 | `arg_clone`, `arg_display` | positional, pushed by clone or by `to_string` |
-| `arg_expr = "expr"` | positional, pushed as the expression's `to_string` |
-| `opt_expr = "expr"` | positional, pushed as `v.to_string()` when the expression is `Some(v)` |
+| `arg_expr = expr` or `arg_expr = "expr"` | positional, pushed as the expression's `to_string` |
+| `opt_expr = expr` or `opt_expr = "expr"` | positional, pushed as `v.to_string()` when the expression is `Some(v)` |
 | `arg_join_opt = "other"`, `sep = ":"` | positional joined with the named `Option` field when it is `Some` |
 | `fmt = "'{}'"` | a format string with one `{}` applied to each value before it is pushed; for the kv, multi and positional kinds |
 | `join = ","` | collapse a `Vec` into one argument: `multi_arg_flag = "--features", join = ","` gives `--features a,b` |
 | `mode` | the field is an enum deriving `SimpleShellMode` |
 | `subcommand` | the field is the subcommand word |
-| `order = 3` / `"first"` / `"last"` / `"before:field"` / `"after:field"` | where the field lands in the command |
+| `order = 3` / `"first"` / `"last"` / `"before:field"` / `"after:field"`, or `order(first)` / `order(last)` / `order(before = field)` / `order(after = field)` | where the field lands in the command |
 
 ### `#[shell(flag = "...")]` on a variant (`SimpleShellMode`)
 
@@ -489,7 +497,7 @@ The flag pushed when that variant is selected. A variant without one pushes noth
 | `skip` | no setter |
 | `init_only` | set by the constructor or `default_expr`, no setter |
 | `init_required` | a constructor argument with no setter |
-| `default_expr = "expr"` | the expression `new()` initialises the field with |
+| `default_expr = expr` or `default_expr = "expr"` | the expression `new()` initialises the field with |
 | `method = "name"` | the setter's name, when not the field's |
 | `flag`, `opt`, `opt_into`, `set`, `set_into`, `vec_into`, `vec_iter` | the setter kind |
 | `push` | the setter kind that appends one element to a `Vec<T>`, taking `impl Into<T>` |

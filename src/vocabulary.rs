@@ -16,8 +16,8 @@ pub(crate) fn shell_struct() -> AttrSchema {
         .doc("trait_path", "path of the ShellCommand trait to implement, as a string")
         .optional("require_order", K::Bool)
         .doc("require_order", "every emitted field must carry an `order`")
-        .optional("cmd_expr", K::String)
-        .doc("cmd_expr", "the program name as an expression on `self`, instead of `cmd`: cmd_expr = \"if self.sudo { \\\"sudo nano\\\" } else { \\\"nano\\\" }\"")
+        .optional("cmd_expr", K::Any)
+        .doc("cmd_expr", "the program name as an expression on `self`, instead of `cmd`: cmd_expr = if self.sudo { \"sudo nano\" } else { \"nano\" }, or the same as a string")
         .conflicts("cmd", "cmd_expr")
 }
 
@@ -60,10 +60,10 @@ pub(crate) fn shell_field() -> AttrSchema {
         .doc("arg_clone", "positional, pushed by clone (String fields)")
         .optional("arg_display", K::Bool)
         .doc("arg_display", "positional, pushed by to_string")
-        .optional("arg_expr", K::String)
-        .doc("arg_expr", "positional, pushed as the given expression's to_string")
-        .optional("opt_expr", K::String)
-        .doc("opt_expr", "positional, pushed as v.to_string() when the given expression is Some(v)")
+        .optional("arg_expr", K::Any)
+        .doc("arg_expr", "positional, pushed as the given expression's to_string; the expression written as code (arg_expr = self.n + 1) or as a string")
+        .optional("opt_expr", K::Any)
+        .doc("opt_expr", "positional, pushed as v.to_string() when the given expression is Some(v); written as code or as a string")
         .optional("arg_join_opt", K::String)
         .doc("arg_join_opt", "positional joined with the named Option field when it is Some")
         .optional("sep", K::String)
@@ -79,7 +79,7 @@ pub(crate) fn shell_field() -> AttrSchema {
         .optional("subcommand", K::Bool)
         .doc("subcommand", "the field is the subcommand word")
         .optional("order", K::Any)
-        .doc("order", "an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\"")
+        .doc("order", "an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\", or order(first), order(last), order(before = FIELD), order(after = FIELD)")
 }
 
 /// `#[builder(...)]` on a field of a SimpleBuilder / SimpleImpl struct.
@@ -97,8 +97,8 @@ pub(crate) fn builder_field() -> AttrSchema {
         .doc("init_only", "set by the constructor or `default_expr`, no setter")
         .optional("init_required", K::Bool)
         .doc("init_required", "a constructor argument with no setter")
-        .optional("default_expr", K::String)
-        .doc("default_expr", "the expression `new()` initialises the field with")
+        .optional("default_expr", K::Any)
+        .doc("default_expr", "the expression `new()` initialises the field with, written as code or as a string")
         .optional("method", K::String)
         .doc("method", "the setter's name, when not the field's")
         .optional("flag", K::Bool)
