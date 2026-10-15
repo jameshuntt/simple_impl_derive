@@ -8,17 +8,29 @@ use simple_impl_quote_kit::{
     CompositeSurfaceQuote,
 };
 use syn::{Data, DeriveInput, Fields, Ident};
+use crate::diag::{err_at_ctx, err_spanned, E};
+use proc_macro2::Span;
+use syn::spanned::Spanned;
+use liaise_proc_macro::{ensure, SynBuffer};
 
+/// Segment, every entry and the policy are read; each problem goes into one
+/// buffer. The impls are written only when nothing was reported.
 pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStream> {
-    ensure_struct(input)?;
+    let mut errs = SynBuffer::new();
 
-    let segment = parse_subcommand_segment(input)?;
-    let entries = parse_surface_entries(input)?;
-    let declared_fields: Vec<Ident> = entries.iter().filter_map(|e| e.field.clone()).collect();
-    let command_specs = entries
+    ensure!(errs, matches!(input.data, Data::Struct(_)), input => E::CompositeSubOnlyStructs);
+    let segment = errs.absorb(parse_subcommand_segment(input));
+    let entries = parse_surface_entries(input, &mut errs);
+    let declared_fields: Vec<Ident> = entries.iter().filter_map(|(e, _)| e.field.clone()).collect();
+    let command_specs: Vec<CompositeSurfaceCommandQuote> = entries
         .into_iter()
-        .map(|entry| entry_to_command_quote(entry, &input.ident))
-        .collect::<syn::Result<Vec<_>>>()?;
+        .filter_map(|(entry, at)| errs.absorb(entry_to_command_quote(entry, at, &input.ident)))
+        .collect();
+    let policy = errs.absorb(parse_xccute_policy(input));
+
+    let (Some(segment), Some(policy)) = (segment, policy) else {
+        return errs.finish_with(TokenStream::new());
+    };
 
     let quote_spec = CompositeSurfaceQuote::new(
         input.ident.clone(),
@@ -29,71 +41,61 @@ pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStre
     .with_declared_fields(declared_fields);
 
     let contract_impls = emit_composite_surface_impls(&quote_spec);
-    let policy = parse_xccute_policy(input)?;
     let policy_impl = emit_xccute_policy_metadata_impl(&input.ident, &policy);
 
-    Ok(::quote::quote! {
+    errs.finish_with(::quote::quote! {
         #contract_impls
         #policy_impl
     })
 }
 
-fn ensure_struct(input: &DeriveInput) -> syn::Result<()> {
-    if matches!(input.data, Data::Struct(_)) {
-        Ok(())
-    } else {
-        Err(syn::Error::new_spanned(
-            input,
-            "CompositeSubCommand can only be derived for structs",
-        ))
-    }
-}
-
 fn parse_subcommand_segment(input: &DeriveInput) -> syn::Result<String> {
     if !input.attrs.iter().any(|attr| attr.path().is_ident("subcommand")) {
-        return Err(syn::Error::new_spanned(input, "CompositeSubCommand requires #[subcommand(segment = \"...\")]"));
+        return Err(err_spanned(input, E::CompositeSubMissingSegment));
     }
     let bag = crate::vocabulary::subcommand().validate(&simple_impl_attr_kit::AttrBag::from_attrs(&input.attrs, "subcommand")?)?;
     Ok(bag.require_str("segment")?.to_owned())
 }
 
-fn parse_surface_entries(input: &DeriveInput) -> syn::Result<Vec<CompositeEntry>> {
+/// Every `#[composite(..)]` on the struct and on each field, each with the
+/// place it was written; a broken entry reports every problem it has and is
+/// still checked for the rest.
+fn parse_surface_entries(input: &DeriveInput, errs: &mut SynBuffer) -> Vec<(CompositeEntry, Span)> {
     let mut entries = Vec::new();
+    // "no entries" means none was written, not that the written ones failed
+    let mut written = false;
 
     for attr in input.attrs.iter().filter(|attr| attr.path().is_ident("composite")) {
-        let entry = CompositeEntry::from_registry_attr(attr)?.ok_or_else(|| {
-            syn::Error::new_spanned(attr, "expected #[composite(command = \"...\", ty = SomeType)]")
-        })?;
-        entries.push(entry);
+        written = true;
+        if let Some(entry) = CompositeEntry::from_registry_attr_into(attr, errs) {
+            entries.push((entry, attr.span()));
+        }
     }
 
     if let Data::Struct(syn::DataStruct { fields: Fields::Named(named), .. }) = &input.data {
         for field in &named.named {
-            if let Some(entry) = CompositeEntry::from_field(field)? {
-                entries.push(entry);
+            written |= field.attrs.iter().any(|attr| attr.path().is_ident("composite"));
+            if let Some(entry) = CompositeEntry::from_field_into(field, errs) {
+                entries.push((entry, crate::composite_shell::composite_attr_span(field)));
             }
         }
     }
 
-    if entries.is_empty() {
-        return Err(syn::Error::new_spanned(
-            input,
-            "CompositeSubCommand requires at least one #[composite(command = \"...\", ty = SomeType)] entry",
-        ));
+    // on a non-struct, "only structs" already says it
+    if !written && matches!(input.data, Data::Struct(_)) {
+        errs.push_spanned(input, E::CompositeSubNoEntries);
     }
 
-    Ok(entries)
+    entries
 }
 
 fn entry_to_command_quote(
     entry: CompositeEntry,
+    at: Span,
     surface_ident: &Ident,
 ) -> syn::Result<CompositeSurfaceCommandQuote> {
     if entry.kind != CompositeEntryKind::Command {
-        return Err(syn::Error::new_spanned(
-            entry.method,
-            "CompositeSubCommand nested surfaces are not generated yet; this pass supports command entries",
-        ));
+        return Err(err_at_ctx(at, E::CompositeSubNestedSurface, format!("`{}`", entry.segment)));
     }
 
     let rooted_ident = nested_command_rooted_ident_for(surface_ident, &entry.method);

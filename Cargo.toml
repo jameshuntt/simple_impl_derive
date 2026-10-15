@@ -1,8 +1,8 @@
 [package]
 name = "simple_impl_derive"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 description = "Derives that turn a struct into a command-line builder and the argument vector it produces: SimpleBuilder, SimpleShell, SimpleImpl, SimpleShellMode, SimpleSubCommand, CompositeShell, CompositeSubCommand."
 authors = ["James Hunt <james@1o.business>"]
@@ -20,11 +20,12 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
-liaise = { version = "0.1.6", features = ["std", "syn-error"] }
-simple_impl_attr_kit = { version = "0.2.0", path = "../simple_impl_attr_kit" }
-simple_impl_core = { version = "0.3.0", path = "../simple_impl_core" }
-simple_impl_quote_kit = { version = "0.3.0", path = "../simple_impl_quote_kit" }
+simple_impl_attr_kit = { version = "0.2.2", path = "../simple_impl_attr_kit" }
+simple_impl_core = { version = "0.3.2", path = "../simple_impl_core" }
+simple_impl_quote_kit = { version = "0.3.2", path = "../simple_impl_quote_kit" }
+liaise_proc_macro = { version = "0.1.3", path = "../liaise_proc_macro" }
 
 [dev-dependencies]
-simple_impl = { path = "../simple_impl" }
+# versioned so the published crate's doctests still find it
+simple_impl = { version = "0.1", path = "../simple_impl" }
 xccute_contract = { version = "0.1.0", path = "../xccute_contract" }

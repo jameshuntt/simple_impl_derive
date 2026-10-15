@@ -1,0 +1,102 @@
+# Tests every push and pull request on the newest Rust and on the oldest one
+# this crate supports (rust-version in Cargo.toml). On main, once the tests
+# pass, publishes to crates.io if Cargo.toml's version is not there yet.
+# Publishing uses crates.io trusted publishing: no stored token.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # crates this one depends on by path; CI clones them next to it
+  SIBLINGS: liaise_proc_macro simple_impl_attr_kit simple_impl_core simple_impl_quote_kit simple_impl xccute_contract
+
+jobs:
+  test:
+    name: test on Rust ${{ matrix.rust }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone the sibling crates this one builds against (../<name>)
+        # the same branch when a sibling has one, so a change across crates is tested together
+        run: |
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          for s in $SIBLINGS; do
+            git clone --depth 1 --branch "$branch" "https://github.com/jameshuntt/$s.git" "../$s" 2>/dev/null \
+              || git clone --depth 1 "https://github.com/jameshuntt/$s.git" "../$s"
+            echo "$s: $(git -C "../$s" rev-parse --abbrev-ref HEAD) $(git -C "../$s" rev-parse --short HEAD)"
+          done
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Test
+        if: matrix.rust == 'stable'
+        run: cargo test --all-features
+      - name: Build and test on the oldest supported Rust
+        if: matrix.rust != 'stable'
+        run: cargo test --all-features
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone the sibling crates this one builds against (../<name>)
+        # the same branch when a sibling has one, so a change across crates is tested together
+        run: |
+          branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          for s in $SIBLINGS; do
+            git clone --depth 1 --branch "$branch" "https://github.com/jameshuntt/$s.git" "../$s" 2>/dev/null \
+              || git clone --depth 1 "https://github.com/jameshuntt/$s.git" "../$s"
+            echo "$s: $(git -C "../$s" rev-parse --abbrev-ref HEAD) $(git -C "../$s" rev-parse --short HEAD)"
+          done
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Is this version already on crates.io?
+        id: check
+        run: |
+          read -r name version < <(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0] | "\(.name) \(.version)"')
+          status=$(curl -s -o /dev/null -w '%{http_code}' -A "github.com/${GITHUB_REPOSITORY} CI" "https://crates.io/api/v1/crates/$name/$version")
+          case "$status" in
+            200) echo "$name $version is already on crates.io; nothing to publish."; echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "$name $version is new; publishing."; echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "crates.io answered $status for $name $version"; exit 1 ;;
+          esac
+      - uses: rust-lang/crates-io-auth-action@v1
+        if: steps.check.outputs.publish == 'true'
+        id: auth
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          # Cargo.lock may differ from the commit only because a sibling crate
+          # cloned beside this one is at another version; anything else is a
+          # real change, and publishing stops.
+          if [ -n "$(git status --porcelain --untracked-files=all -- . ':(exclude)Cargo.lock')" ]; then
+            git status --short; echo "uncommitted changes besides Cargo.lock"; exit 1
+          fi
+          # Crates released together publish in dependency order: if a crate
+          # this one needs is not on crates.io yet, wait for it and retry.
+          for attempt in $(seq 1 30); do
+            log="$RUNNER_TEMP/publish.log"
+            if cargo publish --allow-dirty 2> "$log"; then cat "$log"; exit 0; fi
+            cat "$log"
+            grep -qE 'no matching package named|candidate versions found which didn.t match' "$log" || exit 1
+            echo "a dependency is not on crates.io yet; waiting 30s (attempt $attempt of 30)"
+            sleep 30
+          done
+          exit 1

@@ -3,7 +3,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, HashMap},
+    collections::{BinaryHeap, HashMap, HashSet},
 };
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -22,6 +22,7 @@ use syn::{
 };
 
 use crate::{diag, diag::E};
+use liaise_proc_macro::{ensure, SynBuffer};
 use simple_impl_core::{
     BuilderCfg,
     BuilderKind,
@@ -39,7 +40,6 @@ use simple_impl_core::{
     type_is_uint,
 };
 
-
 mod builder_emit;
 mod expand;
 mod parse;
@@ -47,8 +47,12 @@ mod shell_emit;
 mod shell_mode;
 
 pub(crate) use expand::expand;
+pub(crate) use parse::{is_ident, method_ident};
 pub(crate) use shell_mode::expand_shell_mode;
 
 use builder_emit::expand_builder_impl;
-use parse::{infer_pos_mode, parse_struct_and_fields};
+use parse::{infer_pos_mode, parse_struct_and_fields, Parsed};
 use shell_emit::expand_shell_impl;
+
+#[cfg(test)]
+mod collect_tests;

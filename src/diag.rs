@@ -1,142 +1,80 @@
-use quote::ToTokens;
-use syn::Error;
-use proc_macro2::Span;
+//! The derive's error codes, in one liaise table. Rendered `[SHELL1002] message`.
 
-#[allow(unused)]
-#[allow(non_camel_case_types)]
-#[derive(Copy, Clone)]
-pub(crate) enum E {
-    // 0xxx: Struct level
-    MissingStructCmd,
-    OnlyStructsSupported,
-    NamedFieldsRequired,
-    NamedFieldsRequired2,
-    NamedFieldsRequiredGeneral,
+pub(crate) use liaise_proc_macro::{err_at, err_at_ctx, err_spanned};
 
-    // 1xxx: Field level
-    MultipleEmissionKinds,
-    SepWithoutJoin,
-    RequireOrderMissing,
-    OrderOnNonEmitted,
-    ArgJoinUnknownField,
-    InvalidOrderValue,
-    InvalidOrderType,
+liaise_proc_macro::liaise_codes! {
+    prefix: "SHELL",
+    pub(crate) E {
+        // 0xxx: struct level
+        MissingStructCmd = 1 => "missing #[shell(cmd = \"...\")] or #[shell(cmd_expr = \"...\")] on struct",
+        OnlyStructsSupported = 2 => "SimpleImpl only supports structs",
+        NamedFieldsRequired = 3 => "SimpleImpl requires a named-field struct (e.g., struct Foo { bar: i32 })",
+        NamedFieldsRequired2 = 4 => "SimpleImpl requires named fields (e.g., `field_name: Type`)",
+        NamedFieldsRequiredGeneral = 5 => "expected named field",
 
-    // 2xxx: Ordering
-    OrderTargetUnknown,
-    OrderCaseCollision,
-    OrderCycle,
-    OrderBeforeMissingTarget,
-    OrderAfterMissingTarget,
+        // 1xxx: field level
+        MultipleEmissionKinds = 1001 => "field has multiple #[shell(...)] emission kinds; choose only one",
+        SepWithoutJoin = 1002 => "#[shell(sep = \"...\")] is only valid with #[shell(arg_join_opt = \"other_field\")]",
+        RequireOrderMissing = 1003 => "missing #[shell(order = ...)] (struct has #[shell(require_order)])",
+        OrderOnNonEmitted = 1004 => "#[shell(order=...)] provided but this field is not emitted",
+        ArgJoinUnknownField = 1005 => "arg_join_opt references unknown field",
+        InvalidOrderValue = 1006 => "order must be an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\"",
+        InvalidOrderType = 1007 => "order must be an integer or a string",
+        OptKvRequiresOption = 1010 => "#[shell(opt_kv = \"...\")] requires Option<T>",
+        OptPrefixRequiresOption = 1011 => "#[shell(opt_prefix = \"...\")] requires Option<T>",
+        OptEqRequiresOption = 1012 => "#[shell(opt_eq = \"...\")] requires Option<T>",
+        FlagRequiresBool = 1013 => "#[shell(flag/flag_off)] requires bool",
+        CountFlagRequiresUint = 1014 => "#[shell(count_flag = \"...\")] requires u8/u16/u32/u64/usize",
+        MultiOptKvRequiresVec = 1015 => "#[shell(multi_opt_kv = \"...\")] requires Vec<T> or Option<Vec<T>>",
+        MultiOptPrefixRequiresVec = 1016 => "#[shell(multi_opt_prefix = \"...\")] requires Vec<T> or Option<Vec<T>>",
+        MultiArgFlagRequiresVec = 1017 => "#[shell(multi_arg_flag = \"...\")] requires Vec<T> or Option<Vec<T>>",
+        MultipleSubcommands = 1018 => "multiple #[shell(subcommand)] fields; only one is supported",
+        ArgCloneRequiresString = 1019 => "#[shell(arg_clone)] is only valid for String or Option<String>",
+        FmtOnWrongKind = 1020 => "#[shell(fmt = \"...\")] applies to kv, opt_kv, multi_opt_kv, multi_arg_flag and positional fields; prefix, eq, flag and count kinds shape their own value",
+        FmtNeedsOnePlaceholder = 1021 => "#[shell(fmt = \"...\")] needs exactly one `{}`",
+        JoinOnWrongKind = 1022 => "#[shell(join = \"...\")] applies to multi_arg_flag, multi_opt_kv and a positional Vec",
 
-    // 3xxx: Builder
-    BuilderPushNeedsName,
-    InitRequiredConflictDefault,
-    InitOnlyConflictKind,
+        // 2xxx: ordering
+        OrderTargetUnknown = 2001 => "order target references unknown (or non-emitted) field",
+        OrderCaseCollision = 2002 => "case-insensitive order target collision; use exact field names",
+        OrderCycle = 2003 => "ordering cycle detected in #[shell(order=...)] constraints",
+        OrderBeforeMissingTarget = 2004 => "order=\"before:FIELD\" requires a field name",
+        OrderAfterMissingTarget = 2005 => "order=\"after:FIELD\" requires a field name",
 
-    OptKvRequiresOption,
-    OptPrefixRequiresOption,
-    OptEqRequiresOption,
+        // 3xxx: builder
+        BuilderPushNeedsName = 3001 => "builder(push) requires a dedicated naming scheme",
+        InitRequiredConflictDefault = 3002 => "#[builder(init_required)] cannot be combined with default_expr",
+        InitOnlyConflictKind = 3003 => "#[builder(init_only)] cannot be combined with builder kind overrides",
+        PushRequiresVec = 3004 => "#[builder(push)] requires a Vec<T> field",
+        OptKindRequiresOption = 3005 => "#[builder(opt)] and #[builder(opt_into)] require an Option<T> field",
+        VecKindRequiresVec = 3006 => "#[builder(vec_into)] and #[builder(vec_iter)] require a Vec<T> field",
+        MethodNotIdent = 3007 => "#[builder(method = \"...\")] must be a Rust identifier",
 
-    FlagRequiresBool,
-    CountFlagRequiresUint,
+        // 4xxx: SimpleShellMode
+        ModeOnlyEnums = 4001 => "SimpleShellMode only supports enums",
+        ModeUnitVariantsOnly = 4002 => "SimpleShellMode only supports unit variants (e.g. Json, Xml, Raw)",
 
-    MultiOptKvRequiresVec,
-    MultiOptPrefixRequiresVec,
-    MultiArgFlagRequiresVec,
+        // 5xxx: SimpleSubCommand
+        SubcmdMissingSegment = 5001 => "SimpleSubCommand requires #[subcommand(segment = \"...\")]",
+        SubcmdOnlyStructs = 5002 => "SimpleSubCommand can only be derived for structs",
+        SubcmdNamedFields = 5003 => "SimpleSubCommand requires named fields",
+        SubcmdFieldNeedsArg = 5004 => "SimpleSubCommand fields require #[arg(flag = \"...\")], #[arg(kv = \"...\")], or #[arg(positional)]",
+        RuleFieldNotIdent = 5005 => "validation rule field must be a Rust field identifier",
+        RuleFnNotPath = 5006 => "#[validate(with = \"...\")] must be a function path",
 
-    MultipleSubcommands,
+        // 6xxx: CompositeShell
+        CompositeShellOnlyStructs = 6001 => "CompositeShell can only be derived for structs",
+        CompositeEntryExpected = 6002 => "expected #[composite(command = \"...\", ty = SomeType)]",
+        CompositeShellNoEntries = 6003 => "CompositeShell requires at least one #[composite(command = \"...\", ty = SomeType)] entry",
+        CompositeShellSurfaceInitArgs = 6004 => "CompositeShell surface entries cannot use init args yet",
 
-    ArgCloneRequiresString,
+        // 7xxx: CompositeSubCommand
+        CompositeSubOnlyStructs = 7001 => "CompositeSubCommand can only be derived for structs",
+        CompositeSubMissingSegment = 7002 => "CompositeSubCommand requires #[subcommand(segment = \"...\")]",
+        CompositeSubNoEntries = 7003 => "CompositeSubCommand requires at least one #[composite(command = \"...\", ty = SomeType)] entry",
+        CompositeSubNestedSurface = 7004 => "CompositeSubCommand nested surfaces are not generated yet; this pass supports command entries",
 
-    FmtOnWrongKind,
-    FmtNeedsOnePlaceholder,
-    JoinOnWrongKind,
-    PushRequiresVec,
-
-    Unmatched
-}
-
-impl E {
-    pub fn render(self) -> &'static str {
-        match self {
-            E::MissingStructCmd => "SHELL(1): missing #[shell(cmd = \"...\")] on struct",
-            E::OnlyStructsSupported => "SHELL(2): SimpleImpl only supports structs",
-            E::NamedFieldsRequired => "SHELL(3): SimpleImpl requires a named-field struct (e.g., struct Foo { bar: i32 })",
-            E::NamedFieldsRequired2 => "SHELL(4): SimpleImpl requires named fields (e.g., `field_name: Type`)",
-            E::NamedFieldsRequiredGeneral => "SHELL(5): expected named field",
-
-            E::MultipleEmissionKinds => "SHELL(1001): field has multiple #[shell(...)] emission kinds; choose only one",
-            E::SepWithoutJoin => "SHELL(1002): #[shell(sep = \"...\")] is only valid with #[shell(arg_join_opt = \"other_field\")]",
-            E::RequireOrderMissing => "SHELL(1003): missing #[shell(order = ...)] (struct has #[shell(require_order)])",
-            E::OrderOnNonEmitted => "SHELL(1004): #[shell(order=...)] provided but this field is not emitted",
-            E::ArgJoinUnknownField => "SHELL(1005): arg_join_opt references unknown field",
-            E::InvalidOrderValue => "SHELL(1006): order must be an integer, or \"first\", \"last\", \"before:FIELD\", \"after:FIELD\"",
-            E::InvalidOrderType => "SHELL(1007): order must be an integer or a string",
-            
-            E::OptKvRequiresOption => "SHELL(1010): #[shell(opt_kv = \"...\")] requires Option<T>",
-            E::OptPrefixRequiresOption => "SHELL(1011): #[shell(opt_prefix = \"...\")] requires Option<T>",
-            E::OptEqRequiresOption => "SHELL(1012): #[shell(opt_eq = \"...\")] requires Option<T>",
-
-            E::FlagRequiresBool => "SHELL(1013): #[shell(flag/flag_off)] requires bool",
-            E::CountFlagRequiresUint => "SHELL(1014): #[shell(count_flag = \"...\")] requires u8/u16/u32/u64/usize",
-
-            E::MultiOptKvRequiresVec => "SHELL(1015): #[shell(multi_opt_kv = \"...\")] requires Vec<T> or Option<Vec<T>>",
-            E::MultiOptPrefixRequiresVec => "SHELL(1016): #[shell(multi_opt_prefix = \"...\")] requires Vec<T> or Option<Vec<T>>",
-            E::MultiArgFlagRequiresVec => "SHELL(1017): #[shell(multi_arg_flag = \"...\")] requires Vec<T> or Option<Vec<T>>",
-
-            E::MultipleSubcommands => "SHELL(1018): multiple #[shell(subcommand)] fields; only one is supported",
-
-            E::ArgCloneRequiresString => "SHELL(1019): #[shell(arg_clone)] is only valid for String or Option<String>",
-            E::FmtOnWrongKind => "SHELL(1020): #[shell(fmt = \"...\")] applies to kv, opt_kv, multi_opt_kv, multi_arg_flag and positional fields; prefix, eq, flag and count kinds shape their own value",
-            E::FmtNeedsOnePlaceholder => "SHELL(1021): #[shell(fmt = \"...\")] needs exactly one `{}`",
-            E::JoinOnWrongKind => "SHELL(1022): #[shell(join = \"...\")] applies to multi_arg_flag, multi_opt_kv and a positional Vec",
-            E::PushRequiresVec => "SHELL(3004): #[builder(push)] requires a Vec<T> field",
-            
-            E::OrderTargetUnknown => "SHELL(2001): order target references unknown (or non-emitted) field",
-            E::OrderCaseCollision => "SHELL(2002): case-insensitive order target collision; use exact field names",
-            E::OrderCycle => "SHELL(2003): ordering cycle detected in #[shell(order=...)] constraints",
-            E::OrderBeforeMissingTarget => "SHELL(2004): order=\"before:FIELD\" requires a field name",
-            E::OrderAfterMissingTarget => "SHELL(2005): order=\"after:FIELD\" requires a field name",
-
-            E::BuilderPushNeedsName => "SHELL(3001): builder(push) requires a dedicated naming scheme",
-            E::InitRequiredConflictDefault => "SHELL(3002): #[builder(init_required)] cannot be combined with default_expr",
-            E::InitOnlyConflictKind => "SHELL(3003): #[builder(init_only)] cannot be combined with builder kind overrides",
-
-            E::Unmatched => "internal error: field marked emitted but no emission kind matched",
-        }
-    }
-}
-
-pub(crate) fn err_spanned<T: ToTokens>(t: T, e: E) -> Error {
-    Error::new_spanned(t, e.render())
-}
-
-pub(crate) fn err_at(span: Span, e: E) -> Error {
-    Error::new(span, e.render())
-}
-
-#[derive(Default)]
-pub(crate) struct Errors {
-    err: Option<syn::Error>,
-}
-
-impl Errors {
-    pub fn push(&mut self, e: syn::Error) {
-        match &mut self.err {
-            Some(existing) => existing.combine(e),
-            None => self.err = Some(e),
-        }
-    }
-
-    pub fn push_spanned<T: ToTokens>(&mut self, t: T, e: E) {
-        self.push(err_spanned(t, e));
-    }
-
-    pub fn finish(self) -> Result<(), syn::Error> {
-        match self.err {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        // 9xxx: internal
+        Unmatched = 9001 => "internal error: field marked emitted but no emission kind matched",
     }
 }

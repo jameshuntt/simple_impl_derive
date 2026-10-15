@@ -67,7 +67,7 @@ pub(crate) fn shell_field() -> AttrSchema {
         .optional("arg_join_opt", K::String)
         .doc("arg_join_opt", "positional joined with the named Option field when it is Some")
         .optional("sep", K::String)
-        .doc("sep", "the separator for `arg_join_opt`; the derive checks the pairing (SHELL(1002))")
+        .doc("sep", "the separator for `arg_join_opt`; the derive checks the pairing (SHELL1002)")
         // value shaping
         .optional("fmt", K::String)
         .doc("fmt", "a format string with one `{}`, applied to each value before it is pushed: fmt = \"'{}'\" gives -H 'value'")
@@ -116,7 +116,7 @@ pub(crate) fn builder_field() -> AttrSchema {
         .optional("vec_iter", K::Bool)
         .doc("vec_iter", "setter kind: `fn field(self, impl IntoIterator<Item = T>)`")
         .optional("push", K::Bool)
-        .doc("push", "setter kind: `fn field(self, impl Into<T>)` pushing one element onto a Vec<T>; the derive checks kinds against `init_required` and `default_expr` (BUILDER(3002), BUILDER(3003))")
+        .doc("push", "setter kind: `fn field(self, impl Into<T>)` pushing one element onto a Vec<T>; the derive checks kinds against `init_required` and `default_expr` (SHELL3002, SHELL3003)")
 }
 
 /// The setter kinds of [`builder_field`], in the order the last one written wins.

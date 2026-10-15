@@ -58,7 +58,8 @@ pub(super) fn expand_builder_impl(input: &DeriveInput, fields: &[FieldInfo]) -> 
             return None;
         }
         let method_ident = match &f.builder.method {
-            Some(name) => ::quote::format_ident!("{}", name),
+            // checked at parse; a name that does not read keeps the field's own
+            Some(name) => method_ident(name).unwrap_or_else(|| f.ident.clone()),
             None => f.ident.clone(),
         };
         let method = &method_ident;

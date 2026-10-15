@@ -265,7 +265,8 @@ fn validate_run_target(cmd: &OrbRun) -> CommandValidationResult {
     Ok(())
 }
 
-// Field-style entries: the field name is the segment and the method.
+// Field-style entries: the field name is the method; the command word comes
+// from the command type's own #[subcommand(segment = "...")].
 #[derive(CompositeShell, Debug, Clone, Default)]
 #[shell(program = "orbctl")]
 struct OrbCtl {
@@ -517,7 +518,12 @@ One of `flag`, `kv`, `positional` per field.
 | `#[subcommand(segment = "project")]` | the surface's segment (`CompositeSubCommand`) |
 | `#[composite(command = "run", ty = Run, method = "run", init = "a,b")]` | on the struct: a command entry; `method` defaults to the segment with `-` as `_`; `init` names the `new()` arguments forwarded |
 | `#[composite(surface = "project", ty = Project)]` | on the struct: a nested surface entry |
-| `#[composite(command)]`, `#[composite(surface)]` on a field | the field's name is the segment and the method; `command = "seg"` and `method`, `init` still apply |
+| `#[composite(command)]`, `#[composite(surface)]` on a field | the field's name is the method (`method` overrides it); `init` still applies |
+
+The command word each entry puts in the argument list is its type's own
+`#[subcommand(segment = "...")]`. On the struct, `command = "..."` names the
+entry's default method (`-` as `_`); on a field, the field's name is the method
+and a `command` value is not used. A field's first `#[composite]` is its entry.
 
 A nested surface's commands take their `init` arguments; they do not yet
 re-expose the leaf's optional setters, and a surface inside a surface is
@@ -526,11 +532,17 @@ refused.
 ## Errors
 
 Unknown, repeated and wrong-kind keys are refused at the key. The rules
-between keys carry stable codes: `SHELL(1002)` for `sep` without
-`arg_join_opt`, `SHELL(1006)` for a bad `order` value, order targets that do
-not exist or form a cycle, one emission kind per field, and `BUILDER(3002)`
-/ `BUILDER(3003)` for setter kinds that contradict `init_required` or
+between keys carry stable codes: `SHELL1002` for `sep` without
+`arg_join_opt`, `SHELL1006` for a bad `order` value, order targets that do
+not exist or form a cycle, one emission kind per field, and `SHELL3002`
+/ `SHELL3003` for setter kinds that contradict `init_required` or
 `default_expr`.
+
+Problems are reported together: a broken field does not stop the checks on
+the other fields, on the ordering, or on the struct, so one compile shows
+every independent mistake. A check that depends on something already
+reported (an attribute that could not be read at all, a field that already
+failed) waits for that fix rather than guess, so it is never a false error.
 
 ## License
 

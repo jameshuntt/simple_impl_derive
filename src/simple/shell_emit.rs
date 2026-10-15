@@ -1,10 +1,49 @@
 use super::*;
 
+/// How many emission kinds a field's `#[shell]` names.
+pub(super) fn shell_kind_count(s: &ShellFieldCfg) -> usize {
+    let mut n = 0;
+
+    // treat flag + flag_off as ONE “kind”
+    if s.flag.is_some() || s.flag_off.is_some() { n += 1; }
+
+    if s.opt_kv.is_some() { n += 1; }
+    if s.opt_prefix.is_some() { n += 1; }
+    if s.opt_eq.is_some() { n += 1; }
+
+    if s.multi_opt_kv.is_some() { n += 1; }
+    if s.multi_opt_prefix.is_some() { n += 1; }
+    if s.multi_arg_flag.is_some() { n += 1; }
+    if s.count_flag.is_some() { n += 1; }
+
+    if s.is_mode { n += 1; }
+    if s.subcommand { n += 1; }
+
+    if s.positional { n += 1; }
+
+    if s.kv.is_some() { n += 1; }
+    if s.prefix.is_some() { n += 1; }
+    if s.eq.is_some() { n += 1; }
+    n
+}
+
+/// The shell impl. Three stages, each reporting everything it finds into
+/// `errs`: the struct, every field, then the ordering across fields. Every
+/// stage runs; a field that failed in the parse is left out and a reference
+/// to it is not reported again. Returns empty tokens when anything was
+/// reported.
 pub(super) fn expand_shell_impl(
     input: &DeriveInput,
-    shell_struct: &ShellCfg,
+    parsed: &Parsed,
     fields: &[FieldInfo],
-) -> Result<TokenStream2, Error> {
+    errs: &mut SynBuffer,
+) -> TokenStream2 {
+    let shell_struct = &parsed.shell_struct;
+    let failed = &parsed.shell_failed;
+    // require_order: a field whose `order` was unreadable is already reported
+    let order_missing = |f: &FieldInfo| {
+        shell_struct.require_order && f.shell.order.is_none() && !parsed.order_failed.contains(&f.ident.to_string())
+    };
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
@@ -15,14 +54,17 @@ pub(super) fn expand_shell_impl(
         }
         (None, Some(expr)) => quote! { (#expr).to_string() },
         (None, None) => {
-            return Err(Error::new(input.span(), "missing #[shell(cmd = \"...\")] or #[shell(cmd_expr = \"...\")] on struct"))
+            // an unreadable #[shell(...)] is already reported; cmd may be unset only because of it
+            if parsed.cmd_known {
+                errs.push_at(input.span(), E::MissingStructCmd);
+            }
+            TokenStream2::new()
         }
     };
 
     let trait_path: Path = match &shell_struct.trait_path {
         Some(p) => p.clone(),
-        None => syn::parse_str("::simple_impl::ShellCommand")
-            .map_err(|e| Error::new(input.span(), format!("default trait_path parse error: {e}")))?,
+        None => syn::parse_quote!(::simple_impl::ShellCommand),
     };
 
     // by_name: field-name -> (&Ident, &Type)
@@ -66,32 +108,19 @@ pub(super) fn expand_shell_impl(
     //     if s.positional           { n += 1; }
     //     n
     // }
-    fn shell_kind_count(s: &ShellFieldCfg) -> usize {
-        let mut n = 0;
 
-        // treat flag + flag_off as ONE “kind”
-        if s.flag.is_some() || s.flag_off.is_some() { n += 1; }
 
-        if s.opt_kv.is_some() { n += 1; }
-        if s.opt_prefix.is_some() { n += 1; }
-        if s.opt_eq.is_some() { n += 1; }
-
-        if s.multi_opt_kv.is_some() { n += 1; }
-        if s.multi_opt_prefix.is_some() { n += 1; }
-        if s.multi_arg_flag.is_some() { n += 1; }
-        if s.count_flag.is_some() { n += 1; }
-
-        if s.is_mode { n += 1; }
-        if s.subcommand { n += 1; }
-
-        if s.positional { n += 1; }
-
-        if s.kv.is_some() { n += 1; }
-        if s.prefix.is_some() { n += 1; }
-        if s.eq.is_some() { n += 1; }
-        n
+    /// init_required (init_only + required) on a non-bool, non-Option field
+    /// emits as a positional with no `#[shell]` at all.
+    fn implied_positional(f: &FieldInfo) -> bool {
+        f.builder.init_only && f.builder.required && type_allows_implied(f)
     }
 
+    /// Only a field that is neither bool nor Option<T> can be an implied
+    /// positional, whatever its #[builder] says.
+    fn type_allows_implied(f: &FieldInfo) -> bool {
+        !type_is_bool(&f.ty) && type_option_inner(&f.ty).is_none()
+    }
 
     fn base_order(f: &FieldInfo, band: i32) -> (i32, Option<ShellOrder>) {
         match &f.shell.order {
@@ -249,7 +278,9 @@ pub(super) fn expand_shell_impl(
 
     let mut items: Vec<EmitItem> = Vec::new();
 
-    let mut errs = diag::Errors::default();
+    // A field joined onto one that already failed is skipped, not reported:
+    // its partner's error is the one to fix.
+    let joins_failed = |f: &FieldInfo| f.shell.arg_join_opt_with.as_ref().is_some_and(|w| failed.contains(w));
 
     // (optional) enforce only one subcommand field per struct
     let mut saw_subcommand = false;
@@ -258,20 +289,18 @@ pub(super) fn expand_shell_impl(
         let k = shell_kind_count(&f.shell);
 
         // NEW: implied positional emission for init_required fields
-        let implied_positional =
-            // init_required = init_only + required
-            (f.builder.init_only && f.builder.required)
-            // avoid accidental "true/false" pushes
-            && !type_is_bool(&f.ty)
-            // required positional should not be Option<T>
-            && type_option_inner(&f.ty).is_none();
+        let implied_positional = implied_positional(f);
 
         
         // Field not used by shell emission:
         if k == 0 {
             // sep without join is still invalid
-            if f.shell.arg_join_sep.is_some() {
-                errs.push_spanned(f.ident.clone(), E::SepWithoutJoin);
+            ensure!(errs, f.shell.arg_join_sep.is_none(), &f.ident => E::SepWithoutJoin);
+
+            // an unreadable #[builder] leaves "implied positional?" open: the
+            // checks below would be guesses, so this field stops here
+            if parsed.builder_unread.contains(&f.ident.to_string()) && type_allows_implied(f) {
+                continue;
             }
 
 //             guard!(f.shell.arg_join_sep.is_none(), {
@@ -286,16 +315,14 @@ pub(super) fn expand_shell_impl(
             // If the user set order but provided no emission kind, allow it ONLY if
             // we will infer positional emission (init_required).
             if !implied_positional {
-                if f.shell.order.is_some() {
-                    errs.push_spanned(f.ident.clone(), E::OrderOnNonEmitted);
-                }
+                // a present but unreadable order still sits on a field that emits nothing
+                let has_order = f.shell.order.is_some() || parsed.order_failed.contains(&f.ident.to_string());
+                ensure!(errs, !has_order, &f.ident => E::OrderOnNonEmitted);
                 continue;
             }
 
             // Strict mode: require explicit order for inferred emitted fields too
-            if shell_struct.require_order && f.shell.order.is_none() {
-                errs.push_spanned(f.ident.clone(), E::RequireOrderMissing);
-            }
+            ensure!(errs, !order_missing(f), &f.ident => E::RequireOrderMissing);
 
             let (_vt, _vc, _vs, _vsc) = shapes(f);
             // Emit unconditional positional push:
@@ -329,35 +356,27 @@ pub(super) fn expand_shell_impl(
                 || f.shell.eq.is_some() || f.shell.opt_eq.is_some()
                 || f.shell.arg_join_opt_with.is_some() || f.shell.arg_expr.is_some() || f.shell.opt_expr.is_some())
         {
-            errs.push_spanned(f.ident.clone(), E::FmtOnWrongKind);
+            errs.push_spanned(&f.ident, E::FmtOnWrongKind);
         }
         if let Some(fmt) = &f.shell.fmt {
-            if fmt.matches("{}").count() != 1 {
-                errs.push_spanned(f.ident.clone(), E::FmtNeedsOnePlaceholder);
-            }
+            ensure!(errs, fmt.matches("{}").count() == 1, &f.ident => E::FmtNeedsOnePlaceholder);
         }
         if f.shell.join.is_some()
             && f.shell.multi_arg_flag.is_none()
             && f.shell.multi_opt_kv.is_none()
             && !(f.shell.positional && f.shell.arg_expr.is_none() && f.shell.opt_expr.is_none() && f.shell.arg_join_opt_with.is_none() && type_vec_inner(&f.ty).is_some())
         {
-            errs.push_spanned(f.ident.clone(), E::JoinOnWrongKind);
+            errs.push_spanned(&f.ident, E::JoinOnWrongKind);
         }
 
         // Hygiene: exactly one emission kind per field
-        if k > 1 {
-            errs.push_spanned(f.ident.clone(), E::MultipleEmissionKinds);
-        }
+        ensure!(errs, k <= 1, &f.ident => E::MultipleEmissionKinds);
 
         // Validation: sep only with arg_join_opt
-        if f.shell.arg_join_sep.is_some() && f.shell.arg_join_opt_with.is_none() {
-            errs.push_spanned(f.ident.clone(), E::SepWithoutJoin);
-        }
+        ensure!(errs, !(f.shell.arg_join_sep.is_some() && f.shell.arg_join_opt_with.is_none()), &f.ident => E::SepWithoutJoin);
 
         // Strict mode: require explicit order for all emitted fields
-        if shell_struct.require_order && f.shell.order.is_none() {
-            errs.push_spanned(f.ident.clone(), E::RequireOrderMissing);
-        }
+        ensure!(errs, !order_missing(f), &f.ident => E::RequireOrderMissing);
 
 //         // Hygiene: exactly one emission kind per field
 //         ensure!(k <= 1, errs, f.ident.clone(), E::MultipleEmissionKinds);
@@ -388,25 +407,41 @@ pub(super) fn expand_shell_impl(
         //     continue;
         // }
 // opt_kv / opt_prefix / opt_eq must be Option<T>
-if f.shell.opt_kv.is_some() && type_option_inner(&f.ty).is_none() {
-    errs.push_spanned(f.ident.clone(), E::OptKvRequiresOption);
-}
-if f.shell.opt_prefix.is_some() && type_option_inner(&f.ty).is_none() {
-    errs.push_spanned(f.ident.clone(), E::OptPrefixRequiresOption);
-}
-if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
-    errs.push_spanned(f.ident.clone(), E::OptEqRequiresOption);
-}
+        let is_option = type_option_inner(&f.ty).is_some();
+        ensure!(errs, f.shell.opt_kv.is_none() || is_option, &f.ident => E::OptKvRequiresOption);
+        ensure!(errs, f.shell.opt_prefix.is_none() || is_option, &f.ident => E::OptPrefixRequiresOption);
+        ensure!(errs, f.shell.opt_eq.is_none() || is_option, &f.ident => E::OptEqRequiresOption);
+        // more than one kind (already reported): only one branch below would
+        // run, so every kind written gets its type check here; the field is not
+        // built, and its placeholder stands in for it in the ordering
+        if k > 1 {
+            let is_vec = type_vec_inner(&f.ty).is_some() || type_option_vec_inner(&f.ty).is_some();
+            let is_flag = f.shell.flag.is_some() || f.shell.flag_off.is_some();
+            ensure!(errs, !is_flag || type_is_bool(&f.ty), &f.ident => E::FlagRequiresBool);
+            ensure!(errs, f.shell.count_flag.is_none() || type_is_uint(&f.ty), &f.ident => E::CountFlagRequiresUint);
+            ensure!(errs, f.shell.multi_opt_kv.is_none() || is_vec, &f.ident => E::MultiOptKvRequiresVec);
+            ensure!(errs, f.shell.multi_opt_prefix.is_none() || is_vec, &f.ident => E::MultiOptPrefixRequiresVec);
+            ensure!(errs, f.shell.multi_arg_flag.is_none() || is_vec, &f.ident => E::MultiArgFlagRequiresVec);
+            // the partner is looked up only where emitting would read it: not
+            // when an expression or a joined Vec comes first
+            let joins = f.shell.arg_expr.is_none() && f.shell.opt_expr.is_none() && !(f.shell.join.is_some() && type_vec_inner(&f.ty).is_some());
+            if let (true, Some(with)) = (joins, &f.shell.arg_join_opt_with) {
+                ensure!(errs, failed.contains(with) || by_name.contains_key(with), &f.ident => E::ArgJoinUnknownField);
+            }
+            if f.shell.subcommand {
+                ensure!(errs, !saw_subcommand, &f.ident => E::MultipleSubcommands);
+                saw_subcommand = true;
+            }
+            continue;
+        }
         if f.shell.subcommand {
-            if saw_subcommand {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "multiple #[shell(subcommand)] fields; only one subcommand is supported",
-                ));
+            if !ensure!(errs, !saw_subcommand, &f.ident => E::MultipleSubcommands) {
+                continue;
             }
             saw_subcommand = true;
 
-            let tokens = emit_positional_tokens(f, &by_name)?;
+            if joins_failed(f) { continue; }
+            let Some(tokens) = errs.absorb(emit_positional_tokens(f, &by_name)) else { continue };
             let (base, rel) = base_order(f, ORD_SUBCMD);
             let (_vt, _vc, _vs, _vsc) = shapes(f);
             items.push(EmitItem {
@@ -448,11 +483,8 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
         }
 
         if let Some(ch) = &f.shell.count_flag {
-            if !type_is_uint(&f.ty) {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "#[shell(count_flag = \"...\")] requires an unsigned integer field (u8/u16/u32/u64/usize)",
-                ));
+            if !ensure!(errs, type_is_uint(&f.ty), &f.ident => E::CountFlagRequiresUint) {
+                continue;
             }
 
             let field = &f.ident;
@@ -498,7 +530,8 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                         }
                     }
                 } else {
-                    return Err(diag::err_spanned(&f.ident, E::MultiArgFlagRequiresVec));
+                    errs.push_spanned(&f.ident, E::MultiOptKvRequiresVec);
+                    continue;
                 };
                 items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
                 continue;
@@ -521,10 +554,8 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                     }
                 }
             } else {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "#[shell(multi_opt_kv = \"...\")] requires Vec<T> or Option<Vec<T>>",
-                ));
+                errs.push_spanned(&f.ident, E::MultiOptKvRequiresVec);
+                continue;
             };
 
             items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
@@ -552,10 +583,8 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                     }
                 }
             } else {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "#[shell(multi_opt_prefix = \"...\")] requires Vec<T> or Option<Vec<T>>",
-                ));
+                errs.push_spanned(&f.ident, E::MultiOptPrefixRequiresVec);
+                continue;
             };
 
             items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
@@ -580,7 +609,8 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                         }
                     }
                 } else {
-                    return Err(diag::err_spanned(&f.ident, E::MultiArgFlagRequiresVec));
+                    errs.push_spanned(&f.ident, E::MultiArgFlagRequiresVec);
+                    continue;
                 };
                 items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
                 continue;
@@ -607,25 +637,17 @@ if f.shell.opt_eq.is_some() && type_option_inner(&f.ty).is_none() {
                     }
                 }
             } else {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "#[shell(multi_arg_flag = \"...\")] requires Vec<T> or Option<Vec<T>>",
-                ));
+                errs.push_spanned(&f.ident, E::MultiArgFlagRequiresVec);
+                continue;
             };
 
             items.push(EmitItem { name: f.ident.to_string(), base, tie: f.order, span: f.ident.span(), rel, tokens });
             continue;
         }
-if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty) {
-    errs.push_spanned(f.ident.clone(), E::FlagRequiresBool);
-}
         // Boolean on/off (toggle) + plain flag-only
         if f.shell.flag.is_some() || f.shell.flag_off.is_some() {
-            if !type_is_bool(&f.ty) {
-                return Err(Error::new(
-                    f.ident.span(),
-                    "shell flag/flag_off require a bool field",
-                ));
+            if !ensure!(errs, type_is_bool(&f.ty), &f.ident => E::FlagRequiresBool) {
+                continue;
             }
 
             let field = &f.ident;
@@ -813,7 +835,8 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
         }
 
         if f.shell.positional {
-            let pos_tokens = emit_positional_tokens(f, &by_name)?;
+            if joins_failed(f) { continue; }
+            let Some(pos_tokens) = errs.absorb(emit_positional_tokens(f, &by_name)) else { continue };
             let (base, rel) = base_order(f, ORD_POS);
             let (_vt, _vc, _vs, _vsc) = shapes(f);
 
@@ -829,12 +852,27 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
         }
 
         // Should be unreachable (k>0 means one of the above matched)
-        errs.push_spanned(f.ident.clone(), E::Unmatched);    
+        errs.push_spanned(&f.ident, E::Unmatched);
     }
 
-    // 3. The "Explosion" point
-    // If any fields had errors, this returns Err and stops the macro.
-    errs.finish()?;
+    // 3. The "Explosion" point used to be here. Ordering now runs on every
+    // field. One that should have emitted but failed above gets an empty
+    // placeholder item, so its before/after edges still count (a cycle
+    // through it is reported now); nothing is generated once anything was
+    // reported. A field that failed in the parse is not here at all, so an
+    // order target naming it is skipped rather than reported unknown.
+    let built: HashSet<String> = items.iter().map(|it| it.name.clone()).collect();
+    let mut failed_targets: HashSet<String> = failed.iter().map(|n| n.to_ascii_lowercase()).collect();
+    for f in fields {
+        let name = f.ident.to_string();
+        if shell_kind_count(&f.shell) == 0 && parsed.builder_unread.contains(&name) && type_allows_implied(f) {
+            // whether it emits is unknown until its #[builder] reads
+            failed_targets.insert(name.to_ascii_lowercase());
+        } else if (shell_kind_count(&f.shell) > 0 || implied_positional(f)) && !built.contains(&name) {
+            let (base, rel) = base_order(f, ORD_POS);
+            items.push(EmitItem { name, base, tie: f.order, tokens: TokenStream2::new(), span: f.ident.span(), rel });
+        }
+    }
 
     // -------------------------
     // Build constraint graph (before/after) over emitted items
@@ -844,42 +882,27 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
     let mut idx_exact: HashMap<String, usize> = HashMap::with_capacity(n);
     let mut idx_lower: HashMap<String, usize> = HashMap::with_capacity(n);
 
+    // a lowercase name two fields share (reported below) names neither of them
+    let mut ambiguous: HashSet<String> = HashSet::new();
     for (i, it) in items.iter().enumerate() {
         idx_exact.insert(it.name.clone(), i);
 
         let lower = it.name.to_ascii_lowercase();
-        if let Some(prev) = idx_lower.insert(lower, i) {
+        if let Some(prev) = idx_lower.insert(lower.clone(), i) {
+            ambiguous.insert(lower);
             // If two different fields collide case-insensitively, error out.
             if prev != i {
-                return Err(Error::new(
-                    it.span,
-                    format!(
-                        "case-insensitive order target collision between `{}` and `{}`; \
-                        use exact field names in order=\"before:...\"/\"after:...\"",
-                        items[prev].name, it.name
-                    ),
-                ));
+                errs.push_at_ctx(it.span, E::OrderCaseCollision, format!("`{}` and `{}`", items[prev].name, it.name));
             }
         }
     }
 
-    // Helper: resolve a target name case-insensitively
-    let resolve_target =
-        |target: &str, span: Span|
-    -> Result<usize, Error> {
-        if let Some(&j) = idx_exact.get(target) {
-            return Ok(j);
-        }
-        let key = target.to_ascii_lowercase();
-        idx_lower.get(&key).copied().ok_or_else(|| {
-            Error::new(
-                span,
-                format!(
-                    "order target `{}` references unknown (or non-emitted) field",
-                    target
-                ),
-            )
-        })
+    // Helper: resolve a target name case-insensitively; a name that matches a
+    // field which already failed is that field, not a case-alike of it
+    let resolve_target = |target: &str| -> Option<usize> {
+        let lower = target.to_ascii_lowercase();
+        let unsure = failed_targets.contains(&lower) || ambiguous.contains(&lower);
+        idx_exact.get(target).copied().or_else(|| if unsure { None } else { idx_lower.get(&lower).copied() })
     };
 
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -887,16 +910,22 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
 
     for i in 0..n {
         let Some(rel) = items[i].rel.clone() else { continue };
-        match rel {
-            ShellOrder::Before(target) => {
-                let j = resolve_target(&target, items[i].span)?;
-                adj[i].push(j);
-                indeg[j] += 1;
-            }
-            ShellOrder::After(target) => {
-                let j = resolve_target(&target, items[i].span)?;
-                adj[j].push(i);
-                indeg[i] += 1;
+        match &rel {
+            ShellOrder::Before(target) | ShellOrder::After(target) => {
+                let Some(j) = resolve_target(target) else {
+                    let lower = target.to_ascii_lowercase();
+                    if !failed_targets.contains(&lower) && !ambiguous.contains(&lower) {
+                        errs.push_at_ctx(items[i].span, E::OrderTargetUnknown, format!("`{target}`"));
+                    }
+                    continue;
+                };
+                if matches!(rel, ShellOrder::Before(_)) {
+                    adj[i].push(j);
+                    indeg[j] += 1;
+                } else {
+                    adj[j].push(i);
+                    indeg[i] += 1;
+                }
             }
             _ => {}
         }
@@ -925,13 +954,23 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
     }
 
     if order.len() != n {
-        let stuck = (0..n).find(|&i| indeg[i] > 0).unwrap_or(0);
-        return Err(diag::err_at(items[stuck].span, E::OrderCycle));
+        // every circle of before/after is its own problem: one error each, at
+        // its first field
+        let stuck: Vec<bool> = indeg.iter().map(|&d| d > 0).collect();
+        for cycle in order_cycles(&adj, &stuck) {
+            // placeholders sit after the built items: pick by field order
+            if let Some(&first) = cycle.iter().min_by_key(|&&i| items[i].tie) {
+                errs.push_at(items[first].span, E::OrderCycle);
+            }
+        }
+    }
+    if !errs.is_empty() {
+        return TokenStream2::new();
     }
 
     let emitted = order.into_iter().map(|i| items[i].tokens.clone());
 
-    Ok(quote! {
+    quote! {
         impl #impl_generics #trait_path for #name #ty_generics #where_clause {
             fn build(&self) -> ::std::string::String {
                 let mut parts: ::std::vec::Vec<::std::string::String> =
@@ -942,45 +981,63 @@ if (f.shell.flag.is_some() || f.shell.flag_off.is_some()) && !type_is_bool(&f.ty
                 parts.join(" ")
             }
         }
-    })
+    }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/// The circles among the nodes the sort could not place: each strongly
+/// connected set of two or more, or one node ordered against itself (Tarjan).
+fn order_cycles(adj: &[Vec<usize>], stuck: &[bool]) -> Vec<Vec<usize>> {
+    struct Walk<'a> {
+        adj: &'a [Vec<usize>],
+        stuck: &'a [bool],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        on_stack: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        cycles: Vec<Vec<usize>>,
+    }
+    fn visit(w: &mut Walk, v: usize) {
+        w.index[v] = Some(w.next);
+        w.low[v] = w.next;
+        w.next += 1;
+        w.stack.push(v);
+        w.on_stack[v] = true;
+        for &u in &w.adj[v] {
+            if !w.stuck[u] {
+                continue;
+            }
+            match w.index[u] {
+                None => {
+                    visit(w, u);
+                    w.low[v] = w.low[v].min(w.low[u]);
+                }
+                Some(iu) if w.on_stack[u] => w.low[v] = w.low[v].min(iu),
+                Some(_) => {}
+            }
+        }
+        if Some(w.low[v]) == w.index[v] {
+            let mut set = Vec::new();
+            while let Some(u) = w.stack.pop() {
+                w.on_stack[u] = false;
+                set.push(u);
+                if u == v {
+                    break;
+                }
+            }
+            if set.len() > 1 || w.adj[v].contains(&v) {
+                set.sort_unstable();
+                w.cycles.push(set);
+            }
+        }
+    }
+    let n = adj.len();
+    let mut w = Walk { adj, stuck, index: vec![None; n], low: vec![0; n], on_stack: vec![false; n], stack: Vec::new(), next: 0, cycles: Vec::new() };
+    for v in 0..n {
+        if stuck[v] && w.index[v].is_none() {
+            visit(&mut w, v);
+        }
+    }
+    w.cycles.sort();
+    w.cycles
+}
