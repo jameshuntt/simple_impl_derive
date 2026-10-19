@@ -2,6 +2,7 @@ use proc_macro2::TokenStream;
 use simple_impl_core::{ValidationRule, ValidationSpec};
 use simple_impl_quote_kit::{
     emit_simple_subcommand_contract_impls_shaped,
+    emit_simple_subcommand_nested_impls,
     ExitStatusQuote,
     SimpleSubcommandQuote,
     SubcommandArgKind,
@@ -96,6 +97,7 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
         rule_contexts.push("#[arg(each, min)]".to_owned());
     }
     let exit_statuses = parse_exit_statuses(input, &mut errs);
+    let help_words = help_words(segment.as_deref().filter(|segment| !segment.is_empty()), &fields);
 
     // The contract checks every field it is given and that every rule names
     // one of them. It runs on the fields that parsed (on a struct of the
@@ -107,10 +109,13 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
     let quote_spec = SimpleSubcommandQuote::new(input.ident.clone(), input.vis.clone(), segment.clone().unwrap_or_default(), field_specs)
         .with_validation_rules(validation_rules);
     let shape = line.as_ref().map_or_else(SubcommandShapeQuote::new, |line| subcommand_shape(line, exit_statuses));
+    let shape = shape.with_help(help_words, doc_text(&input.attrs));
     let contract_impls = errs.absorb(emit_simple_subcommand_contract_impls_shaped(&quote_spec, &failed, &rule_contexts, &shape));
+    // the leaf under any surface, and its help line, after its own items
+    let nested_impls = contract_impls.as_ref().and_then(|_| errs.absorb(emit_simple_subcommand_nested_impls(&quote_spec, &shape)));
     let policy = errs.absorb(parse_xccute_policy(input));
 
-    let (Some(_), Some(contract_impls), Some(policy)) = (segment, contract_impls, policy) else {
+    let (Some(_), Some(contract_impls), Some(policy), Some(nested_impls)) = (segment, contract_impls, policy, nested_impls) else {
         return errs.finish_with(TokenStream::new());
     };
     let policy_impl = emit_xccute_policy_metadata_impl(&input.ident, &policy);
@@ -119,7 +124,49 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
         #contract_impls
         #policy_impl
         #arg_checks
+        #nested_impls
     })
+}
+
+/// The line's words as its declaration writes them, for its help line: the
+/// segment, then each field in argv order. A value is its field's name in
+/// capitals; what may be left out is in brackets, and a list ends in `...`
+/// (`start NAME [--kind KIND] [--tag TAG]... [--again] [PATH...]`).
+fn help_words(segment: Option<&str>, fields: &[SubcommandField]) -> String {
+    let words = fields.iter().map(|field| {
+        let value = field.ident.unraw().to_string().to_uppercase();
+        let list = simple_impl_attr_kit::is_vec_ty(&field.ty);
+        let optional = simple_impl_attr_kit::is_option_ty(&field.ty) || (list && field.min.unwrap_or(0) == 0);
+        let word = match &field.kind {
+            ArgKind::Flag(flag) => return format!("[{flag}]"),
+            ArgKind::KeyValue(key) => format!("{key} {value}"),
+            ArgKind::Positional => value,
+        };
+        match (optional, list) {
+            (true, true) if matches!(field.kind, ArgKind::KeyValue(_)) => format!("[{word}]..."),
+            (true, true) => format!("[{word}...]"),
+            (true, false) => format!("[{word}]"),
+            (false, true) => format!("{word}..."),
+            (false, false) => word,
+        }
+    });
+    segment.map(ToOwned::to_owned).into_iter().chain(words).collect::<Vec<_>>().join(" ")
+}
+
+/// The struct's `///` lines, each trimmed, joined by a space; the empty ones
+/// are left out.
+fn doc_text(attrs: &[syn::Attribute]) -> String {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            syn::Meta::NameValue(syn::MetaNameValue { value: syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(text), .. }), .. }) => Some(text.value()),
+            _ => None,
+        })
+        .map(|line| line.trim().to_owned())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The line's shape for the contract: no segment when none was given, the

@@ -2,6 +2,7 @@ use proc_macro2::TokenStream;
 use simple_impl_attr_kit::{AttrBag, AttrExpected, AttrSchema};
 use simple_impl_core::{CompositeEntry, CompositeEntryKind};
 use simple_impl_quote_kit::{
+    emit_composite_shell_help_impl,
     emit_composite_shell_root_impls,
     CompositeShellEntryQuote,
     CompositeShellQuote,
@@ -29,7 +30,13 @@ pub fn expand_composite_shell(input: &DeriveInput) -> syn::Result<TokenStream> {
     let quote_spec = CompositeShellQuote::new(input.ident.clone(), program, entries.into_iter().map(|e| e.quote).collect())
         .with_declared_fields(declared_fields);
 
-    Ok(emit_composite_shell_root_impls(&quote_spec))
+    // the root's help lines, after its own items
+    let root_impls = emit_composite_shell_root_impls(&quote_spec);
+    let help_impl = emit_composite_shell_help_impl(&quote_spec);
+    Ok(::quote::quote! {
+        #root_impls
+        #help_impl
+    })
 }
 
 fn parse_shell_program(input: &DeriveInput) -> syn::Result<String> {

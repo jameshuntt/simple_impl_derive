@@ -2,8 +2,9 @@ use proc_macro2::TokenStream;
 use simple_impl_core::{CompositeEntry, CompositeEntryKind};
 use crate::xccute_policy::{emit_xccute_policy_metadata_impl, parse_xccute_policy};
 use simple_impl_quote_kit::{
-    emit_composite_surface_impls,
+    emit_composite_surface_impls_with,
     nested_command_rooted_ident_for,
+    CompositeNestedSurfaceQuote,
     CompositeSurfaceCommandQuote,
     CompositeSurfaceQuote,
 };
@@ -22,10 +23,15 @@ pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStre
     let segment = errs.absorb(parse_subcommand_segment(input));
     let entries = parse_surface_entries(input, &mut errs);
     let declared_fields: Vec<Ident> = entries.iter().filter_map(|(e, _)| e.field.clone()).collect();
-    let command_specs: Vec<CompositeSurfaceCommandQuote> = entries
-        .into_iter()
-        .filter_map(|(entry, at)| errs.absorb(entry_to_command_quote(entry, at, &input.ident)))
-        .collect();
+    let mut command_specs: Vec<CompositeSurfaceCommandQuote> = Vec::new();
+    let mut surface_specs: Vec<CompositeNestedSurfaceQuote> = Vec::new();
+    for (entry, at) in entries {
+        match errs.absorb(entry_to_quote(entry, at, &input.ident)) {
+            Some(SurfaceEntryQuote::Command(command)) => command_specs.push(command),
+            Some(SurfaceEntryQuote::Surface(surface)) => surface_specs.push(surface),
+            None => {}
+        }
+    }
     let policy = errs.absorb(parse_xccute_policy(input));
 
     let (Some(segment), Some(policy)) = (segment, policy) else {
@@ -40,7 +46,7 @@ pub fn expand_composite_subcommand(input: &DeriveInput) -> syn::Result<TokenStre
     )
     .with_declared_fields(declared_fields);
 
-    let contract_impls = emit_composite_surface_impls(&quote_spec);
+    let contract_impls = emit_composite_surface_impls_with(&quote_spec, &surface_specs);
     let policy_impl = emit_xccute_policy_metadata_impl(&input.ident, &policy);
 
     errs.finish_with(::quote::quote! {
@@ -89,20 +95,31 @@ fn parse_surface_entries(input: &DeriveInput, errs: &mut SynBuffer) -> Vec<(Comp
     entries
 }
 
-fn entry_to_command_quote(
+enum SurfaceEntryQuote {
+    Command(CompositeSurfaceCommandQuote),
+    Surface(CompositeNestedSurfaceQuote),
+}
+
+/// A command entry, or a surface inside this surface. A surface takes no
+/// `init` arguments, as a root's surface entry takes none; its commands take
+/// theirs.
+fn entry_to_quote(
     entry: CompositeEntry,
     at: Span,
     surface_ident: &Ident,
-) -> syn::Result<CompositeSurfaceCommandQuote> {
-    if entry.kind != CompositeEntryKind::Command {
-        return Err(err_at_ctx(at, E::CompositeSubNestedSurface, format!("`{}`", entry.segment)));
+) -> syn::Result<SurfaceEntryQuote> {
+    if entry.kind == CompositeEntryKind::Surface {
+        if !entry.init_args.is_empty() {
+            return Err(err_at_ctx(at, E::CompositeSubSurfaceInitArgs, format!("`{}`", entry.segment)));
+        }
+        return Ok(SurfaceEntryQuote::Surface(CompositeNestedSurfaceQuote::new(entry.method, entry.ty)));
     }
 
     let rooted_ident = nested_command_rooted_ident_for(surface_ident, &entry.method);
-    Ok(CompositeSurfaceCommandQuote::new(
+    Ok(SurfaceEntryQuote::Command(CompositeSurfaceCommandQuote::new(
         entry.method,
         entry.ty,
         rooted_ident,
         entry.init_args,
-    ))
+    )))
 }

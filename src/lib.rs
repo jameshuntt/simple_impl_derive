@@ -7,6 +7,8 @@ use syn::{parse_macro_input, DeriveInput};
 mod composite_shell;
 mod composite_subcommand;
 mod diag;
+#[cfg(test)]
+mod golden_tests;
 mod vocabulary;
 mod simple;
 mod simple_subcommand;

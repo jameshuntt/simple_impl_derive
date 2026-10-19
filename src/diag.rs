@@ -78,7 +78,9 @@ liaise_proc_macro::liaise_codes! {
         CompositeSubOnlyStructs = 7001 => "CompositeSubCommand can only be derived for structs",
         CompositeSubMissingSegment = 7002 => "CompositeSubCommand requires #[subcommand(segment = \"...\")]",
         CompositeSubNoEntries = 7003 => "CompositeSubCommand requires at least one #[composite(command = \"...\", ty = SomeType)] entry",
+        // 7004 (a surface inside a surface was refused) is not raised since 0.2.7, when nested surfaces are generated
         CompositeSubNestedSurface = 7004 => "CompositeSubCommand nested surfaces are not generated yet; this pass supports command entries",
+        CompositeSubSurfaceInitArgs = 7005 => "a surface inside a CompositeSubCommand takes no init args; its commands take theirs",
 
         // 9xxx: internal
         Unmatched = 9001 => "internal error: field marked emitted but no emission kind matched",

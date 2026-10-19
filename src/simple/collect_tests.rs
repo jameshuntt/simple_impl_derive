@@ -537,12 +537,13 @@ fn every_problem_in_one_composite_entry_is_reported() {
     let input: DeriveInput = parse_quote! {
         #[subcommand(segment = "remote")]
         pub struct Surf {
-            #[composite(surface, method = "x y")] s: S,
+            #[composite(surface, method = "x y", init = "a")] s: S,
         }
     };
     let errs = composite_errors(input, true);
     assert_eq!(errs.len(), 2, "{errs:#?}");
-    assert!(errs[1].starts_with("[SHELL7004]"), "{errs:#?}");
+    // a surface inside a surface is generated since 0.2.7; with init it is refused
+    assert!(errs[1].starts_with("[SHELL7005]"), "{errs:#?}");
 }
 
 #[test]

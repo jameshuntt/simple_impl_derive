@@ -1,0 +1,841 @@
+// ---- CompositeShell Orb
+impl ::xccute_contract::CompositeShellRoot for Orb {
+    fn program() -> &'static ::std::ffi::OsStr {
+        ::std::ffi::OsStr::new("orb")
+    }
+}
+impl Orb {
+    pub fn project() -> <Project as ::xccute_contract::RootableCompositeSurface<
+        Orb,
+    >>::RootedSurface
+    where
+        Project: ::std::default::Default
+            + ::xccute_contract::RootableCompositeSurface<Orb>,
+    {
+        <Project as ::xccute_contract::RootableCompositeSurface<
+            Orb,
+        >>::rooted_surface(<Project as ::std::default::Default>::default())
+    }
+}
+impl ::xccute_contract::CommandHelp for Orb
+where
+    for<'__help> Project: ::xccute_contract::CommandHelp,
+{
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        let mut lines = ::std::vec::Vec::new();
+        lines.extend(<Project as ::xccute_contract::CommandHelp>::help_lines());
+        lines.into_iter().map(|line| line.under("orb")).collect()
+    }
+}
+
+// ---- CompositeSubCommand Project
+#[derive(Debug, Clone)]
+pub struct ProjectRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    inner: Project,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R> ::xccute_contract::RootableCompositeSurface<R> for Project
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    type RootedSurface = ProjectRooted<R>;
+    fn rooted_surface(self) -> Self::RootedSurface {
+        ProjectRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl ::xccute_contract::CompositeArgvPart for Project {
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        out.push(::std::ffi::OsString::from("project"));
+    }
+}
+impl<R> ProjectRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    pub fn create(
+        self,
+        name: impl ::std::convert::Into<::std::ffi::OsString>,
+    ) -> ProjectCreateCommand<R> {
+        <Create as ::xccute_contract::RootableNestedCommand<
+            R,
+            Project,
+        >>::nested(Create::new(name), self.inner)
+    }
+    pub fn member(
+        self,
+    ) -> <Member as ::xccute_contract::RootableNestedSurface<R, Project>>::NestedSurface
+    where
+        Member: ::std::default::Default,
+    {
+        <Member as ::xccute_contract::RootableNestedSurface<
+            R,
+            Project,
+        >>::nested_surface(<Member as ::std::default::Default>::default(), self.inner)
+    }
+}
+/// The command directly under this surface: its leaf's nested wrapper,
+/// with the leaf's setters, exit statuses, validation and policy.
+pub type ProjectCreateCommand<R> = <Create as ::xccute_contract::RootableNestedCommand<
+    R,
+    Project,
+>>::Nested;
+#[derive(Debug, Clone)]
+pub struct ProjectNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    prefix: P,
+    inner: Project,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R, P> ::xccute_contract::RootableNestedSurface<R, P> for Project
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    type NestedSurface = ProjectNested<R, P>;
+    fn nested_surface(self, prefix: P) -> Self::NestedSurface {
+        ProjectNested {
+            prefix,
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R, P> ::xccute_contract::CompositeArgvPart for ProjectNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.prefix, out);
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+}
+impl<R, P> ::xccute_contract::XccutePolicyMetadata for ProjectNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart + ::xccute_contract::XccutePolicyMetadata,
+    Project: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.prefix)
+            .merge(::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner))
+    }
+}
+impl<R, P> ProjectNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    pub fn create(
+        self,
+        name: impl ::std::convert::Into<::std::ffi::OsString>,
+    ) -> <Create as ::xccute_contract::RootableNestedCommand<R, Self>>::Nested {
+        <Create as ::xccute_contract::RootableNestedCommand<
+            R,
+            Self,
+        >>::nested(Create::new(name), self)
+    }
+    pub fn member(
+        self,
+    ) -> <Member as ::xccute_contract::RootableNestedSurface<R, Self>>::NestedSurface
+    where
+        Member: ::std::default::Default,
+    {
+        <Member as ::xccute_contract::RootableNestedSurface<
+            R,
+            Self,
+        >>::nested_surface(<Member as ::std::default::Default>::default(), self)
+    }
+}
+impl ::xccute_contract::CommandHelp for Project
+where
+    for<'__help> Create: ::xccute_contract::CommandHelp,
+    for<'__help> Member: ::xccute_contract::CommandHelp,
+{
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        let mut lines = ::std::vec::Vec::new();
+        lines.extend(<Create as ::xccute_contract::CommandHelp>::help_lines());
+        lines.extend(<Member as ::xccute_contract::CommandHelp>::help_lines());
+        lines.into_iter().map(|line| line.under("project")).collect()
+    }
+}
+impl ::xccute_contract::XccutePolicyMetadata for Project {
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        let mut policy = ::xccute_contract::XccuteCommandPolicyMetadata::new()
+            .with_sensitive(false)
+            .with_requires_sudo(false)
+            .with_dry_run_default(true);
+        policy
+    }
+}
+
+// ---- CompositeSubCommand Member
+impl Member {
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    fn __declared_composite_fields(&self) {
+        let _ = &self.role;
+    }
+}
+#[derive(Debug, Clone)]
+pub struct MemberRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    inner: Member,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R> ::xccute_contract::RootableCompositeSurface<R> for Member
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    type RootedSurface = MemberRooted<R>;
+    fn rooted_surface(self) -> Self::RootedSurface {
+        MemberRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl ::xccute_contract::CompositeArgvPart for Member {
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        out.push(::std::ffi::OsString::from("member"));
+    }
+}
+impl<R> MemberRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    pub fn role(
+        self,
+    ) -> <Role as ::xccute_contract::RootableNestedSurface<R, Member>>::NestedSurface
+    where
+        Role: ::std::default::Default,
+    {
+        <Role as ::xccute_contract::RootableNestedSurface<
+            R,
+            Member,
+        >>::nested_surface(<Role as ::std::default::Default>::default(), self.inner)
+    }
+}
+#[derive(Debug, Clone)]
+pub struct MemberNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    prefix: P,
+    inner: Member,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R, P> ::xccute_contract::RootableNestedSurface<R, P> for Member
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    type NestedSurface = MemberNested<R, P>;
+    fn nested_surface(self, prefix: P) -> Self::NestedSurface {
+        MemberNested {
+            prefix,
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R, P> ::xccute_contract::CompositeArgvPart for MemberNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.prefix, out);
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+}
+impl<R, P> ::xccute_contract::XccutePolicyMetadata for MemberNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart + ::xccute_contract::XccutePolicyMetadata,
+    Member: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.prefix)
+            .merge(::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner))
+    }
+}
+impl<R, P> MemberNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    pub fn role(
+        self,
+    ) -> <Role as ::xccute_contract::RootableNestedSurface<R, Self>>::NestedSurface
+    where
+        Role: ::std::default::Default,
+    {
+        <Role as ::xccute_contract::RootableNestedSurface<
+            R,
+            Self,
+        >>::nested_surface(<Role as ::std::default::Default>::default(), self)
+    }
+}
+impl ::xccute_contract::CommandHelp for Member
+where
+    for<'__help> Role: ::xccute_contract::CommandHelp,
+{
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        let mut lines = ::std::vec::Vec::new();
+        lines.extend(<Role as ::xccute_contract::CommandHelp>::help_lines());
+        lines.into_iter().map(|line| line.under("member")).collect()
+    }
+}
+impl ::xccute_contract::XccutePolicyMetadata for Member {
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        let mut policy = ::xccute_contract::XccuteCommandPolicyMetadata::new()
+            .with_sensitive(true)
+            .with_requires_sudo(false)
+            .with_dry_run_default(true);
+        policy
+    }
+}
+
+// ---- CompositeSubCommand Role
+#[derive(Debug, Clone)]
+pub struct RoleRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    inner: Role,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R> ::xccute_contract::RootableCompositeSurface<R> for Role
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    type RootedSurface = RoleRooted<R>;
+    fn rooted_surface(self) -> Self::RootedSurface {
+        RoleRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl ::xccute_contract::CompositeArgvPart for Role {
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        out.push(::std::ffi::OsString::from("role"));
+    }
+}
+impl<R> RoleRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    pub fn set(
+        self,
+        name: impl ::std::convert::Into<::std::ffi::OsString>,
+        role: impl ::std::convert::Into<::std::ffi::OsString>,
+    ) -> RoleSetCommand<R> {
+        <RoleSet as ::xccute_contract::RootableNestedCommand<
+            R,
+            Role,
+        >>::nested(RoleSet::new(name, role), self.inner)
+    }
+}
+/// The command directly under this surface: its leaf's nested wrapper,
+/// with the leaf's setters, exit statuses, validation and policy.
+pub type RoleSetCommand<R> = <RoleSet as ::xccute_contract::RootableNestedCommand<
+    R,
+    Role,
+>>::Nested;
+#[derive(Debug, Clone)]
+pub struct RoleNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    prefix: P,
+    inner: Role,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R, P> ::xccute_contract::RootableNestedSurface<R, P> for Role
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    type NestedSurface = RoleNested<R, P>;
+    fn nested_surface(self, prefix: P) -> Self::NestedSurface {
+        RoleNested {
+            prefix,
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R, P> ::xccute_contract::CompositeArgvPart for RoleNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.prefix, out);
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+}
+impl<R, P> ::xccute_contract::XccutePolicyMetadata for RoleNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart + ::xccute_contract::XccutePolicyMetadata,
+    Role: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.prefix)
+            .merge(::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner))
+    }
+}
+impl<R, P> RoleNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    pub fn set(
+        self,
+        name: impl ::std::convert::Into<::std::ffi::OsString>,
+        role: impl ::std::convert::Into<::std::ffi::OsString>,
+    ) -> <RoleSet as ::xccute_contract::RootableNestedCommand<R, Self>>::Nested {
+        <RoleSet as ::xccute_contract::RootableNestedCommand<
+            R,
+            Self,
+        >>::nested(RoleSet::new(name, role), self)
+    }
+}
+impl ::xccute_contract::CommandHelp for Role
+where
+    for<'__help> RoleSet: ::xccute_contract::CommandHelp,
+{
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        let mut lines = ::std::vec::Vec::new();
+        lines.extend(<RoleSet as ::xccute_contract::CommandHelp>::help_lines());
+        lines.into_iter().map(|line| line.under("role")).collect()
+    }
+}
+impl ::xccute_contract::XccutePolicyMetadata for Role {
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        let mut policy = ::xccute_contract::XccuteCommandPolicyMetadata::new()
+            .with_sensitive(false)
+            .with_requires_sudo(false)
+            .with_dry_run_default(true);
+        policy
+    }
+}
+
+// ---- SimpleSubCommand Create
+impl Create {
+    pub fn new(name: impl ::std::convert::Into<::std::ffi::OsString>) -> Self {
+        Self {
+            name: name.into(),
+            private: ::std::default::Default::default(),
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct CreateRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    inner: Create,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl Create {
+    pub fn rooted<R>(self) -> CreateRooted<R>
+    where
+        R: ::xccute_contract::CompositeShellRoot,
+    {
+        CreateRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R> ::xccute_contract::RootableSubCommand<R> for Create
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    type Rooted = CreateRooted<R>;
+    fn rooted(self) -> Self::Rooted {
+        CreateRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R> ::xccute_contract::XccutePolicyMetadata for CreateRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    Create: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner)
+    }
+}
+impl<R> CreateRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    pub fn name(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.name = value.into();
+        self
+    }
+    pub fn private(mut self) -> Self {
+        self.inner.private = true;
+        self
+    }
+}
+impl ::xccute_contract::CompositeArgvPart for Create {
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        out.push(::std::ffi::OsString::from("create"));
+        out.push(self.name.clone());
+        if self.private {
+            out.push(::std::ffi::OsString::from("--private"));
+        }
+    }
+}
+impl<R> ::xccute_contract::CompositeShellCommand for CreateRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    fn program(&self) -> &::std::ffi::OsStr {
+        R::program()
+    }
+    fn push_args(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+    fn ok_codes(&self) -> &'static [i32] {
+        &[0i32]
+    }
+    fn exit_statuses(&self) -> &'static [::xccute_contract::ExitStatusWord] {
+        &[
+            ::xccute_contract::ExitStatusWord {
+                code: 3i32,
+                word: "exists",
+                accepted: false,
+            },
+        ]
+    }
+}
+impl ::xccute_contract::ValidatedCommand for Create {
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        Ok(())
+    }
+}
+impl<R> ::xccute_contract::ValidatedCommand for CreateRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        ::xccute_contract::ValidatedCommand::validate(&self.inner)
+    }
+}
+impl ::xccute_contract::XccutePolicyMetadata for Create {
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        let mut policy = ::xccute_contract::XccuteCommandPolicyMetadata::new()
+            .with_sensitive(false)
+            .with_requires_sudo(false)
+            .with_dry_run_default(true);
+        policy
+    }
+}
+#[derive(Debug, Clone)]
+pub struct CreateNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    prefix: P,
+    inner: Create,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R, P> ::xccute_contract::RootableNestedCommand<R, P> for Create
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    type Nested = CreateNested<R, P>;
+    fn nested(self, prefix: P) -> Self::Nested {
+        CreateNested {
+            prefix,
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R, P> CreateNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    pub fn name(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.name = value.into();
+        self
+    }
+    pub fn private(mut self) -> Self {
+        self.inner.private = true;
+        self
+    }
+}
+impl<R, P> ::xccute_contract::CompositeShellCommand for CreateNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    fn program(&self) -> &::std::ffi::OsStr {
+        R::program()
+    }
+    fn push_args(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.prefix, out);
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+    fn ok_codes(&self) -> &'static [i32] {
+        &[0i32]
+    }
+    fn exit_statuses(&self) -> &'static [::xccute_contract::ExitStatusWord] {
+        &[
+            ::xccute_contract::ExitStatusWord {
+                code: 3i32,
+                word: "exists",
+                accepted: false,
+            },
+        ]
+    }
+}
+impl<R, P> ::xccute_contract::ValidatedCommand for CreateNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+    Create: ::xccute_contract::ValidatedCommand,
+{
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        ::xccute_contract::ValidatedCommand::validate(&self.inner)
+    }
+}
+impl<R, P> ::xccute_contract::XccutePolicyMetadata for CreateNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart + ::xccute_contract::XccutePolicyMetadata,
+    Create: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.prefix)
+            .merge(::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner))
+    }
+}
+impl ::xccute_contract::CommandHelp for Create {
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        ::std::vec![
+            ::xccute_contract::HelpLine::new("create NAME [--private]",
+            "Makes a project.")
+        ]
+    }
+}
+
+// ---- SimpleSubCommand RoleSet
+impl RoleSet {
+    pub fn new(
+        name: impl ::std::convert::Into<::std::ffi::OsString>,
+        role: impl ::std::convert::Into<::std::ffi::OsString>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            role: role.into(),
+            until: ::std::default::Default::default(),
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct RoleSetRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    inner: RoleSet,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl RoleSet {
+    pub fn rooted<R>(self) -> RoleSetRooted<R>
+    where
+        R: ::xccute_contract::CompositeShellRoot,
+    {
+        RoleSetRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R> ::xccute_contract::RootableSubCommand<R> for RoleSet
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    type Rooted = RoleSetRooted<R>;
+    fn rooted(self) -> Self::Rooted {
+        RoleSetRooted {
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R> ::xccute_contract::XccutePolicyMetadata for RoleSetRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    RoleSet: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner)
+    }
+}
+impl<R> RoleSetRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    pub fn name(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.name = value.into();
+        self
+    }
+    pub fn role(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.role = value.into();
+        self
+    }
+    pub fn until(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.until = Some(value.into());
+        self
+    }
+}
+impl ::xccute_contract::CompositeArgvPart for RoleSet {
+    fn push_argv_part(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        out.push(::std::ffi::OsString::from("set"));
+        out.push(self.name.clone());
+        out.push(self.role.clone());
+        if let Some(value) = &self.until {
+            out.push(::std::ffi::OsString::from("--until"));
+            out.push(value.clone());
+        }
+    }
+}
+impl<R> ::xccute_contract::CompositeShellCommand for RoleSetRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    fn program(&self) -> &::std::ffi::OsStr {
+        R::program()
+    }
+    fn push_args(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+}
+impl ::xccute_contract::ValidatedCommand for RoleSet {
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        Ok(())
+    }
+}
+impl<R> ::xccute_contract::ValidatedCommand for RoleSetRooted<R>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        ::xccute_contract::ValidatedCommand::validate(&self.inner)
+    }
+}
+impl ::xccute_contract::XccutePolicyMetadata for RoleSet {
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        let mut policy = ::xccute_contract::XccuteCommandPolicyMetadata::new()
+            .with_sensitive(false)
+            .with_requires_sudo(false)
+            .with_dry_run_default(true);
+        policy
+    }
+}
+#[derive(Debug, Clone)]
+pub struct RoleSetNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+{
+    prefix: P,
+    inner: RoleSet,
+    _root: ::std::marker::PhantomData<R>,
+}
+impl<R, P> ::xccute_contract::RootableNestedCommand<R, P> for RoleSet
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    type Nested = RoleSetNested<R, P>;
+    fn nested(self, prefix: P) -> Self::Nested {
+        RoleSetNested {
+            prefix,
+            inner: self,
+            _root: ::std::marker::PhantomData,
+        }
+    }
+}
+impl<R, P> RoleSetNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    pub fn name(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.name = value.into();
+        self
+    }
+    pub fn role(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.role = value.into();
+        self
+    }
+    pub fn until(mut self, value: impl Into<::std::ffi::OsString>) -> Self {
+        self.inner.until = Some(value.into());
+        self
+    }
+}
+impl<R, P> ::xccute_contract::CompositeShellCommand for RoleSetNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+{
+    fn program(&self) -> &::std::ffi::OsStr {
+        R::program()
+    }
+    fn push_args(&self, out: &mut ::std::vec::Vec<::std::ffi::OsString>) {
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.prefix, out);
+        ::xccute_contract::CompositeArgvPart::push_argv_part(&self.inner, out);
+    }
+}
+impl<R, P> ::xccute_contract::ValidatedCommand for RoleSetNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart,
+    RoleSet: ::xccute_contract::ValidatedCommand,
+{
+    fn validate(&self) -> ::xccute_contract::CommandValidationResult {
+        ::xccute_contract::ValidatedCommand::validate(&self.inner)
+    }
+}
+impl<R, P> ::xccute_contract::XccutePolicyMetadata for RoleSetNested<R, P>
+where
+    R: ::xccute_contract::CompositeShellRoot,
+    P: ::xccute_contract::CompositeArgvPart + ::xccute_contract::XccutePolicyMetadata,
+    RoleSet: ::xccute_contract::XccutePolicyMetadata,
+{
+    fn xccute_policy(&self) -> ::xccute_contract::XccuteCommandPolicyMetadata {
+        ::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.prefix)
+            .merge(::xccute_contract::XccutePolicyMetadata::xccute_policy(&self.inner))
+    }
+}
+impl ::xccute_contract::CommandHelp for RoleSet {
+    fn help_lines() -> ::std::vec::Vec<::xccute_contract::HelpLine> {
+        ::std::vec![
+            ::xccute_contract::HelpLine::new("set NAME ROLE [--until UNTIL]", "")
+        ]
+    }
+}
+

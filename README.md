@@ -542,6 +542,73 @@ assert_eq!(login.exit_status_of(Some(255)).map(|s| s.word), Some("the login or t
 assert_eq!(login.ok_codes(), &[0]);
 ```
 
+## Argv commands: surfaces inside surfaces, and help lines
+
+A surface can hold surfaces, to any depth. A command under a surface is its
+leaf's nested wrapper (`xccute_contract::RootableNestedCommand`), so it has the
+leaf's setters, exit statuses, validation and policy at every depth, and each
+surface on the way down adds its policy. Every leaf, surface and root has its
+help lines (`xccute_contract::CommandHelp`), each the words its declaration
+writes and the leaf's doc.
+
+```rust
+use std::ffi::OsString;
+use simple_impl_derive::{CompositeShell, CompositeSubCommand, SimpleSubCommand};
+use xccute_contract::{CommandHelp, CompositeShellCommand};
+
+#[derive(CompositeShell, Debug, Clone, Copy, Default)]
+#[shell(program = "custodian")]
+#[composite(surface = "job", ty = Job)]
+struct Custodian;
+
+#[derive(CompositeSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "job")]
+#[composite(command = "start", ty = JobStart, init = "name")]
+#[composite(surface = "step", ty = Step)]
+struct Job;
+
+/// Starts a job.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "start")]
+#[exit_status(code = 1, word = "findings", accepted)]
+struct JobStart {
+    #[builder(init_required, into)]
+    #[arg(positional)]
+    name: OsString,
+    #[builder(into)]
+    #[arg(kv = "--kind")]
+    kind: Option<OsString>,
+    #[arg(flag = "--again")]
+    again: bool,
+}
+
+// a surface inside the surface: `custodian job step skip ID`
+#[derive(CompositeSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "step")]
+#[composite(command = "skip", ty = StepSkip, init = "id")]
+struct Step;
+
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "skip")]
+struct StepSkip {
+    #[builder(init_required, into)]
+    #[arg(positional)]
+    id: OsString,
+    #[arg(flag = "--why")]
+    why: bool,
+}
+
+let start = Custodian::job().start("triage").kind("crate").again();
+assert_eq!(start.build_display(), "custodian job start triage --kind crate --again");
+assert_eq!(start.ok_codes(), &[0, 1]);
+assert_eq!(start.exit_status_of(Some(1)).map(|s| s.word), Some("findings"));
+assert_eq!(Custodian::job().step().skip("4").why().build_display(), "custodian job step skip 4 --why");
+
+let lines: Vec<String> = Custodian::help_lines().into_iter().map(|line| line.words).collect();
+assert_eq!(lines, ["custodian job start NAME [--kind KIND] [--again]", "custodian job step skip ID [--why]"]);
+assert_eq!(JobStart::help_lines()[0].about, "Starts a job.");
+```
+
 ## The vocabulary
 
 Every attribute is parsed against one schema. A misspelt key is refused at
@@ -638,7 +705,7 @@ filled by its setter.
 | `#[shell(program = "orb")]` | the root program (`CompositeShell`) |
 | `#[subcommand(segment = "project")]` | the surface's segment (`CompositeSubCommand`) |
 | `#[composite(command = "run", ty = Run, method = "run", init = "a,b")]` | on the struct: a command entry; `method` defaults to the segment with `-` as `_`; `init` names the `new()` arguments forwarded |
-| `#[composite(surface = "project", ty = Project)]` | on the struct: a nested surface entry |
+| `#[composite(surface = "project", ty = Project)]` | on the struct: a nested surface entry; on a `CompositeSubCommand` a surface inside the surface |
 | `#[composite(command)]`, `#[composite(surface)]` on a field | the field's name is the method (`method` overrides it); `init` still applies |
 
 The command word each entry puts in the argument list is its type's own
@@ -646,9 +713,14 @@ The command word each entry puts in the argument list is its type's own
 entry's default method (`-` as `_`); on a field, the field's name is the method
 and a `command` value is not used. A field's first `#[composite]` is its entry.
 
-A nested surface's commands take their `init` arguments; they do not yet
-re-expose the leaf's optional setters, and a surface inside a surface is
-refused.
+A nested surface's commands take their `init` arguments and have their
+leaf's setters and exit statuses; a surface inside a surface takes no `init`
+arguments (`SHELL7005`), its commands take theirs. `{Surface}{Method}Command<R>`
+names a command directly under a surface. A help line writes a value as its
+field's name in capitals, what may be left out in brackets, and a list with
+`...`: `start NAME [--kind KIND] [--tag TAG]... [--again] [PATH...]`. A root or
+surface over an entry with no help lines (one written by hand) still builds and
+has none.
 
 ## Errors
 
