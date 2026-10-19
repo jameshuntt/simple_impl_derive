@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_derive"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "liaise_proc_macro",
  "prettyplease",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "simple_impl_quote_kit"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "liaise_proc_macro",
  "proc-macro2",
@@ -110,4 +110,4 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "xccute_contract"
-version = "0.1.1"
+version = "0.1.2"

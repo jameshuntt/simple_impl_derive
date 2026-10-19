@@ -902,3 +902,144 @@ fn a_syntax_error_in_code_and_a_repeated_order_target_are_reported() {
     assert!(errs[0].contains("expected an expression") || errs[0].contains("unexpected end of input"), "{errs:#?}");
     assert!(errs[1].starts_with("[SHELL1006]"), "{errs:#?}");
 }
+
+fn sub_tokens(input: DeriveInput) -> String {
+    crate::simple_subcommand::expand_simple_subcommand(&input).unwrap().to_string()
+}
+
+#[test]
+fn a_vec_field_is_a_list_with_each_and_min_checked() {
+    let out = sub_tokens(parse_quote! {
+        #[subcommand(segment = "stop")]
+        pub struct Stop {
+            #[arg(positional, each = crate::plain, min = 1)]
+            units: Vec<OsString>,
+            #[arg(kv = "-p", each = "check")]
+            properties: Vec<OsString>,
+        }
+    });
+    // each value its own word, a kv list `-p value` per value, the setter adding to the list
+    assert!(out.contains("for value in & self . units { out . push (value . clone ()) ; }"), "{out}");
+    assert!(out.contains("for value in & self . properties { out . push (:: std :: ffi :: OsString :: from (\"-p\")) ; out . push (value . clone ()) ; }"), "{out}");
+    assert!(out.contains("self . inner . units . extend (values . into_iter () . map (Into :: into))"), "{out}");
+    // the checks: min first, then each value, called with the field's name
+    assert!(out.contains("if self . units . len () < 1usize"), "{out}");
+    assert!(out.contains("for value in & self . units { crate :: plain (\"units\" , value) ? ; }"), "{out}");
+    assert!(out.contains("for value in & self . properties { check (\"properties\" , value) ? ; }"), "{out}");
+    assert!(out.contains("Self :: __simple_impl_arg_checks (self) ?"), "{out}");
+}
+
+#[test]
+fn an_each_that_is_not_a_path_is_called_in_parentheses() {
+    let out = sub_tokens(parse_quote! {
+        #[subcommand(segment = "s")]
+        pub struct S {
+            #[arg(positional, each = "make_check()")]
+            one: OsString,
+            #[arg(kv = "-k", each = check)]
+            maybe: Option<OsString>,
+        }
+    });
+    assert!(out.contains("(make_check ()) (\"one\" , & self . one) ?"), "{out}");
+    assert!(out.contains("if let :: std :: option :: Option :: Some (value) = & self . maybe { check (\"maybe\" , value) ? ; }"), "{out}");
+}
+
+#[test]
+fn a_line_with_no_segment_pushes_its_fields_only() {
+    let out = sub_tokens(parse_quote! {
+        #[subcommand(no_segment)]
+        pub struct ChownTo {
+            #[builder(init_required)]
+            #[arg(positional)]
+            owner: OsString,
+        }
+    });
+    assert!(out.contains("fn push_argv_part (& self , out : & mut :: std :: vec :: Vec < :: std :: ffi :: OsString >) { out . push (self . owner . clone ()) ; }"), "{out}");
+    assert!(!out.contains("impl :: xccute_contract :: CompositeShellRoot for ChownTo"), "{out}");
+}
+
+#[test]
+fn a_leaf_with_a_program_is_its_own_root_with_its_own_setters() {
+    let out = sub_tokens(parse_quote! {
+        #[subcommand(program = "systemctl", segment = "is-active")]
+        pub struct IsActive {
+            #[arg(flag = "--quiet")]
+            quiet: bool,
+        }
+    });
+    assert!(out.contains("impl :: xccute_contract :: CompositeShellRoot for IsActive { fn program () -> & 'static :: std :: ffi :: OsStr { :: std :: ffi :: OsStr :: new (\"systemctl\") } }"), "{out}");
+    assert!(out.contains("impl :: xccute_contract :: CompositeShellCommand for IsActive"), "{out}");
+    assert!(out.contains("impl IsActive { pub fn quiet (mut self) -> Self { self . quiet = true ; self } }"), "{out}");
+    assert!(out.contains("out . push (:: std :: ffi :: OsString :: from (\"is-active\")) ;"), "{out}");
+    let unit = sub_tokens(parse_quote! {
+        #[subcommand(program = "hostname")]
+        pub struct Hostname;
+    });
+    assert!(unit.contains("fn push_argv_part (& self , out : & mut :: std :: vec :: Vec < :: std :: ffi :: OsString >) { }"), "{unit}");
+}
+
+#[test]
+fn named_statuses_become_ok_codes_and_exit_statuses() {
+    let out = sub_tokens(parse_quote! {
+        #[subcommand(segment = "x")]
+        #[exit_status(code = 0, word = "match")]
+        #[exit_status(code = 1, word = "no match", accepted)]
+        #[exit_status(code = 2, word = "trouble")]
+        pub struct Grep;
+    });
+    assert!(out.contains("fn ok_codes (& self) -> & 'static [i32] { & [0i32 , 1i32] }"), "{out}");
+    assert!(out.contains(":: xccute_contract :: ExitStatusWord { code : 1i32 , word : \"no match\" , accepted : true }"), "{out}");
+    assert!(out.contains(":: xccute_contract :: ExitStatusWord { code : 2i32 , word : \"trouble\" , accepted : false }"), "{out}");
+    // 0 named as not accepted leaves only what is
+    let refused = sub_tokens(parse_quote! {
+        #[subcommand(segment = "x")]
+        #[exit_status(code = 0, word = "odd", accepted = false)]
+        #[exit_status(code = 4, word = "fine", accepted)]
+        pub struct Odd;
+    });
+    assert!(refused.contains("fn ok_codes (& self) -> & 'static [i32] { & [4i32] }"), "{refused}");
+}
+
+#[test]
+fn every_problem_with_the_new_keys_is_reported_in_one_compile() {
+    let errs = sub_errors(parse_quote! {
+        #[subcommand(segment = "s")]
+        #[exit_status(code = 3000000000, word = "big")]
+        #[exit_status(code = 3, word = "a")]
+        #[exit_status(code = 3, word = "b")]
+        #[exit_status(word = "no code")]
+        pub struct S {
+            #[builder(init_required)]
+            #[arg(positional)]
+            list: Vec<OsString>,
+            #[arg(positional, min = 2)]
+            one: OsString,
+            #[arg(positional, min = -1)]
+            many: Vec<OsString>,
+            #[arg(flag = "-f", each = check)]
+            f: bool,
+        }
+    });
+    let codes: Vec<&str> = errs.iter().map(|e| e.split(']').next().unwrap_or(e)).collect();
+    assert_eq!(errs.len(), 7, "{errs:#?}");
+    assert_eq!(codes[..3], ["[SHELL5007", "[SHELL5008", "[SHELL5009"], "{errs:#?}");
+    assert!(errs[3].contains("`flag` cannot be used with `each`"), "{errs:#?}");
+    assert!(errs[4].starts_with("[SHELL5010]") && errs[4].contains("3000000000"), "{errs:#?}");
+    assert!(errs[5].starts_with("[SHELL5011]") && errs[5].ends_with("`3`"), "{errs:#?}");
+    assert!(errs[6].contains("missing required attribute key `code`"), "{errs:#?}");
+}
+
+#[test]
+fn a_missing_segment_is_still_reported_as_it_was_and_segment_conflicts_with_no_segment() {
+    let missing = sub_errors(parse_quote! {
+        #[subcommand()]
+        pub struct S;
+    });
+    assert_eq!(missing, ["missing required attribute key `segment`"]);
+    let both = sub_errors(parse_quote! {
+        #[subcommand(segment = "s", no_segment)]
+        pub struct S;
+    });
+    assert_eq!(both.len(), 1, "{both:?}");
+    assert!(both[0].contains("cannot be used with"), "{both:?}");
+}

@@ -1,16 +1,19 @@
 use proc_macro2::TokenStream;
 use simple_impl_core::{ValidationRule, ValidationSpec};
 use simple_impl_quote_kit::{
-    emit_simple_subcommand_contract_impls_skipping,
+    emit_simple_subcommand_contract_impls_shaped,
+    ExitStatusQuote,
     SimpleSubcommandQuote,
     SubcommandArgKind,
     SubcommandFieldQuote,
+    SubcommandShapeQuote,
     ValidationRuleQuote,
 };
 use simple_impl_attr_kit::AttrBag;
-use quote::format_ident;
+use quote::{format_ident, quote};
+use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Field, Fields, Ident, Type};
-use crate::diag::{err_at_ctx, err_spanned, E};
+use crate::diag::{err_at, err_at_ctx, err_spanned, E};
 use crate::xccute_policy::{emit_xccute_policy_metadata_impl, parse_xccute_policy};
 use liaise_proc_macro::SynBuffer;
 
@@ -38,6 +41,17 @@ struct SubcommandField {
     method: Ident,
     kind: ArgKind,
     init_required: bool,
+    /// `#[arg(each = ..)]`: what is called with the field's name and each value.
+    each: Option<TokenStream>,
+    /// `#[arg(min = N)]`: the fewest values a Vec field takes.
+    min: Option<usize>,
+}
+
+/// What `#[subcommand(..)]` says about the line: its word, and the program
+/// when the leaf is its own root.
+struct SubcommandLine {
+    segment: Option<String>,
+    program: Option<String>,
 }
 
 impl SubcommandField {
@@ -58,7 +72,8 @@ impl SubcommandField {
 pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream> {
     let mut errs = SynBuffer::new();
 
-    let segment = errs.absorb(parse_subcommand_segment(input));
+    let line = errs.absorb(parse_subcommand_line(input));
+    let segment = line.as_ref().map(|line| line.segment.clone().unwrap_or_default());
     let (fields, failed, field_rules) = parse_subcommand_fields(input, &mut errs);
     let struct_rules = simple_impl_attr_kit::parse_validation_attrs_into(&input.attrs, &mut errs);
     // every rule name and validate(with) path is checked; each rule keeps how
@@ -73,6 +88,14 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
             rule_contexts.push(context);
         }
     }
+    // the fields' own checks (#[arg(each, min)]) run after the rules, as one
+    // generated function the contract calls like a #[validate(with)]
+    let arg_checks = emit_arg_checks(&input.ident, &fields);
+    if arg_checks.is_some() {
+        validation_rules.push(ValidationRuleQuote::CustomFunction { function_path: syn::parse_quote!(Self::__simple_impl_arg_checks) });
+        rule_contexts.push("#[arg(each, min)]".to_owned());
+    }
+    let exit_statuses = parse_exit_statuses(input, &mut errs);
 
     // The contract checks every field it is given and that every rule names
     // one of them. It runs on the fields that parsed (on a struct of the
@@ -83,7 +106,8 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
     let field_specs = fields.into_iter().map(SubcommandField::into_quote_spec).collect();
     let quote_spec = SimpleSubcommandQuote::new(input.ident.clone(), input.vis.clone(), segment.clone().unwrap_or_default(), field_specs)
         .with_validation_rules(validation_rules);
-    let contract_impls = errs.absorb(emit_simple_subcommand_contract_impls_skipping(&quote_spec, &failed, &rule_contexts));
+    let shape = line.as_ref().map_or_else(SubcommandShapeQuote::new, |line| subcommand_shape(line, exit_statuses));
+    let contract_impls = errs.absorb(emit_simple_subcommand_contract_impls_shaped(&quote_spec, &failed, &rule_contexts, &shape));
     let policy = errs.absorb(parse_xccute_policy(input));
 
     let (Some(_), Some(contract_impls), Some(policy)) = (segment, contract_impls, policy) else {
@@ -94,15 +118,128 @@ pub fn expand_simple_subcommand(input: &DeriveInput) -> syn::Result<TokenStream>
     errs.finish_with(::quote::quote! {
         #contract_impls
         #policy_impl
+        #arg_checks
     })
 }
 
-fn parse_subcommand_segment(input: &DeriveInput) -> syn::Result<String> {
+/// The line's shape for the contract: no segment when none was given, the
+/// leaf's own program, and the statuses it names with the codes it accepts.
+/// 0 is accepted unless a status names it and says otherwise, as a command
+/// that names nothing accepts it; any other named code is accepted only when
+/// its status says so.
+fn subcommand_shape(line: &SubcommandLine, statuses: Vec<ExitStatusQuote>) -> SubcommandShapeQuote {
+    let mut shape = SubcommandShapeQuote::new();
+    if line.segment.is_none() {
+        shape = shape.without_segment();
+    }
+    if let Some(program) = &line.program {
+        shape = shape.with_program(program.clone());
+    }
+    if !statuses.is_empty() {
+        let zero_refused = statuses.iter().any(|status| status.code == 0 && !status.accepted);
+        let ok_codes = (!zero_refused).then_some(0).into_iter().chain(statuses.iter().filter(|s| s.accepted && s.code != 0).map(|s| s.code)).collect();
+        shape = shape.with_exit_statuses(statuses, ok_codes);
+    }
+    shape
+}
+
+/// Every `#[exit_status(code = N, word = "..", accepted)]`, in order; each
+/// problem is reported and that status left out.
+fn parse_exit_statuses(input: &DeriveInput, errs: &mut SynBuffer) -> Vec<ExitStatusQuote> {
+    let mut statuses: Vec<ExitStatusQuote> = Vec::new();
+    for attr in input.attrs.iter().filter(|attr| attr.path().is_ident("exit_status")) {
+        let Some(bag) = errs.absorb(AttrBag::from_attr(attr, "exit_status").and_then(|bag| crate::vocabulary::exit_status().validate(&bag))) else {
+            continue;
+        };
+        let code_at = bag.span_of("code").unwrap_or_else(|| bag.attr_span());
+        let code = errs.absorb(bag.require_int("code")).and_then(|code| match i32::try_from(code) {
+            Ok(code) => Some(code),
+            Err(_) => {
+                errs.push(err_at_ctx(code_at, E::ExitCodeNotI32, format!("`{code}`")));
+                None
+            }
+        });
+        let word = errs.absorb(bag.require_str("word")).map(ToOwned::to_owned);
+        let accepted = errs.absorb(bag.optional_bool("accepted"));
+        let (Some(code), Some(word), Some(accepted)) = (code, word, accepted) else {
+            continue;
+        };
+        if statuses.iter().any(|status| status.code == code) {
+            errs.push(err_at_ctx(code_at, E::ExitCodeTwice, format!("`{code}`")));
+            continue;
+        }
+        statuses.push(ExitStatusQuote::new(code, word, accepted.unwrap_or(code == 0)));
+    }
+    statuses
+}
+
+/// The fields' own checks, `#[arg(min = N)]` then `#[arg(each = ..)]` for
+/// each field in order, as one hidden method; `None` when no field has one.
+/// A check is called with the field's name and the value, so its error can
+/// name the field.
+fn emit_arg_checks(ident: &Ident, fields: &[SubcommandField]) -> Option<TokenStream> {
+    let checks: Vec<TokenStream> = fields
+        .iter()
+        .filter(|field| field.each.is_some() || field.min.is_some())
+        .map(|field| {
+            let field_ident = &field.ident;
+            let name = field_ident.unraw().to_string();
+            let min = field.min.map(|min| {
+                quote! {
+                    if self.#field_ident.len() < #min {
+                        return ::std::result::Result::Err(
+                            ::xccute_contract::CommandValidationError::structural(::std::format!(
+                                "{} takes at least {} values, given {}",
+                                #name,
+                                #min,
+                                self.#field_ident.len()
+                            ))
+                            .with_field(#name)
+                            .with_rule("min"),
+                        );
+                    }
+                }
+            });
+            let each = field.each.as_ref().map(|each| {
+                if simple_impl_attr_kit::is_vec_ty(&field.ty) {
+                    quote! { for value in &self.#field_ident { #each(#name, value)?; } }
+                } else if simple_impl_attr_kit::is_option_ty(&field.ty) {
+                    quote! { if let ::std::option::Option::Some(value) = &self.#field_ident { #each(#name, value)?; } }
+                } else {
+                    quote! { #each(#name, &self.#field_ident)?; }
+                }
+            });
+            quote! { #min #each }
+        })
+        .collect();
+    if checks.is_empty() {
+        return None;
+    }
+    Some(quote! {
+        impl #ident {
+            #[doc(hidden)]
+            fn __simple_impl_arg_checks(&self) -> ::xccute_contract::CommandValidationResult {
+                #(#checks)*
+                ::std::result::Result::Ok(())
+            }
+        }
+    })
+}
+
+/// `#[subcommand(segment = "..")]`, `#[subcommand(no_segment)]`, or
+/// `#[subcommand(program = "..")]` with or without a segment. Without any of
+/// them the segment is missing, reported as it always was.
+fn parse_subcommand_line(input: &DeriveInput) -> syn::Result<SubcommandLine> {
     if !input.attrs.iter().any(|attr| attr.path().is_ident("subcommand")) {
         return Err(err_spanned(input, E::SubcmdMissingSegment));
     }
-    let bag = crate::vocabulary::subcommand().validate(&AttrBag::from_attrs(&input.attrs, "subcommand")?)?;
-    Ok(bag.require_str("segment")?.to_owned())
+    let written = AttrBag::from_attrs(&input.attrs, "subcommand")?;
+    let segment_required = !(written.contains_key("program") || written.flag("no_segment").unwrap_or(false));
+    let bag = crate::vocabulary::simple_subcommand(segment_required).validate(&written)?;
+    Ok(SubcommandLine {
+        segment: bag.optional_str("segment")?.map(ToOwned::to_owned),
+        program: bag.optional_str("program")?.map(ToOwned::to_owned),
+    })
 }
 
 /// Every field is read; a broken one reports and is left out, and its name
@@ -116,6 +253,8 @@ fn parse_subcommand_fields(input: &DeriveInput, errs: &mut SynBuffer) -> (Vec<Su
         Data::Struct(syn::DataStruct { fields: Fields::Named(named), .. }) => {
             named.named.iter().filter_map(|f| f.ident.clone().map(|ident| (f, ident))).collect()
         }
+        // a line with no arguments (`hostname`, `systemctl daemon-reload`)
+        Data::Struct(syn::DataStruct { fields: Fields::Unit, .. }) => Vec::new(),
         other => {
             if matches!(other, Data::Struct(_)) {
                 errs.push_spanned(input, E::SubcmdNamedFields);
@@ -172,7 +311,8 @@ fn parse_subcommand_fields(input: &DeriveInput, errs: &mut SynBuffer) -> (Vec<Su
 /// each read, and each reports on its own.
 fn parse_subcommand_field(field: &Field, ident: Ident, errs: &mut SynBuffer) -> (Option<SubcommandField>, Vec<ValidationRule>) {
     let builder = read_builder(field, errs);
-    let kind = errs.absorb(read_arg_kind(field));
+    let arg = errs.absorb(read_arg(field));
+    let kind = arg.as_ref().and_then(|bag| errs.absorb(arg_kind(bag)));
     // a rule attribute that cannot be read is reported; the rules that were
     // read are kept, and the field is still checked
     let rules = ValidationSpec::from(simple_impl_attr_kit::parse_field_validation_attrs_into(ident.to_string(), &field.attrs, errs))
@@ -191,6 +331,11 @@ fn parse_subcommand_field(field: &Field, ident: Ident, errs: &mut SynBuffer) -> 
     // is still checked for what does not need #[builder]
     let (method, init_required) = builder.unwrap_or((None, false));
     let method = method.unwrap_or_else(|| ident.clone());
+    let repeated = simple_impl_attr_kit::is_vec_ty(&field.ty) && !matches!(kind, ArgKind::Flag(_));
+    if init_required && repeated {
+        errs.push_spanned(field, E::InitRequiredRepeated);
+    }
+    let (each, min) = arg.as_ref().map_or((None, None), |bag| read_arg_checks(bag, repeated, errs));
 
     let field = SubcommandField {
         ident,
@@ -198,8 +343,36 @@ fn parse_subcommand_field(field: &Field, ident: Ident, errs: &mut SynBuffer) -> 
         method,
         kind,
         init_required,
+        each,
+        min,
     };
     (Some(field), rules)
+}
+
+/// `#[arg(each = ..)]` and `#[arg(min = N)]`: what each value is checked with,
+/// called as written when it is a path (`each = crate::plain`) and in
+/// parentheses when it is any other expression; and the fewest values, on a
+/// Vec field only.
+fn read_arg_checks(bag: &AttrBag, repeated: bool, errs: &mut SynBuffer) -> (Option<TokenStream>, Option<usize>) {
+    let each = crate::simple::read_expr(bag, "each", errs).flatten().map(|tokens| match syn::parse2::<syn::Path>(tokens.clone()) {
+        Ok(_) => tokens,
+        Err(_) => quote! { (#tokens) },
+    });
+    let min_at = bag.span_of("min").unwrap_or_else(|| bag.attr_span());
+    let min = errs.absorb(bag.optional_int("min")).flatten().and_then(|min| {
+        if !repeated {
+            errs.push(err_at(min_at, E::MinNeedsVec));
+            return None;
+        }
+        match usize::try_from(min) {
+            Ok(min) => Some(min),
+            Err(_) => {
+                errs.push(err_at_ctx(min_at, E::MinNotCount, format!("`{min}`")));
+                None
+            }
+        }
+    });
+    (each, min)
 }
 
 /// `#[builder(method = "...", init_required)]`.
@@ -225,7 +398,16 @@ fn read_builder(field: &Field, errs: &mut SynBuffer) -> Option<(Option<Ident>, b
 
 /// `#[arg(flag = "...")]`, `#[arg(kv = "...")]` or `#[arg(positional)]`; `None` if none.
 fn read_arg_kind(field: &Field) -> syn::Result<Option<ArgKind>> {
-    let arg = crate::vocabulary::subcommand_arg().validate(&AttrBag::from_attrs(&field.attrs, "arg")?)?;
+    arg_kind(&read_arg(field)?)
+}
+
+/// A field's `#[arg(...)]`, read against the vocabulary.
+fn read_arg(field: &Field) -> syn::Result<AttrBag> {
+    crate::vocabulary::subcommand_arg().validate(&AttrBag::from_attrs(&field.attrs, "arg")?)
+}
+
+/// The kind an `#[arg(...)]` says; `None` if none.
+fn arg_kind(arg: &AttrBag) -> syn::Result<Option<ArgKind>> {
     Ok(if let Some(flag) = arg.optional_str("flag")? {
         Some(ArgKind::Flag(flag.to_owned()))
     } else if let Some(kv) = arg.optional_str("kv")? {

@@ -47,7 +47,7 @@ mod shell_emit;
 mod shell_mode;
 
 pub(crate) use expand::expand;
-pub(crate) use parse::{is_ident, method_ident};
+pub(crate) use parse::{is_ident, method_ident, read_expr};
 pub(crate) use shell_mode::expand_shell_mode;
 
 use builder_emit::expand_builder_impl;

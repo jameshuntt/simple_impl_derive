@@ -436,6 +436,112 @@ assert_eq!(policy.path_roles(), ["deployer"]);
 assert!(!policy.dry_run_default());
 ```
 
+## Argv commands: lists, lines with no word of their own, programs alone, exit statuses
+
+```rust
+use std::ffi::OsStr;
+
+use simple_impl_derive::{CompositeShell, SimpleSubCommand};
+use xccute_contract::{
+    CommandValidationError, CommandValidationResult, CompositeShellCommand, ExitStatusWord, ValidatedCommand,
+};
+
+/// A word that never reads as an option. `each` calls it with the field's name and each value.
+fn plain(field: &str, word: &OsStr) -> CommandValidationResult {
+    let text = word.to_string_lossy();
+    if text.is_empty() || text.starts_with('-') || text.contains(' ') {
+        return Err(CommandValidationError::structural(format!("{text:?} is not a plain {field}")).with_field(field));
+    }
+    Ok(())
+}
+
+#[derive(CompositeShell, Debug, Clone, Copy, Default)]
+#[shell(program = "systemctl")]
+#[composite(command = "stop", ty = Stop)]
+#[composite(command = "is-active", method = "is_active", ty = IsActive, init = "unit")]
+#[composite(command = "daemon-reload", method = "daemon_reload", ty = DaemonReload)]
+struct Systemctl;
+
+/// `systemctl stop UNIT...`: a Vec field is a list, one word per value.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "stop")]
+struct Stop {
+    #[arg(positional, each = plain, min = 1)]
+    units: Vec<std::ffi::OsString>,
+}
+
+/// `systemctl is-active UNIT`, and the statuses it names: 0 goes on, 3 does not.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "is-active")]
+#[exit_status(code = 0, word = "active")]
+#[exit_status(code = 3, word = "inactive")]
+struct IsActive {
+    #[builder(init_required)]
+    #[arg(positional, each = plain)]
+    unit: std::ffi::OsString,
+}
+
+/// `systemctl daemon-reload`: a unit struct has no arguments.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(segment = "daemon-reload")]
+struct DaemonReload;
+
+#[derive(CompositeShell, Debug, Clone, Copy, Default)]
+#[shell(program = "chown")]
+#[composite(command = "", method = "to", ty = ChownTo, init = "owner,path")]
+struct Chown;
+
+/// `chown OWNER PATH`: no word of its own, the owner leads.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(no_segment)]
+struct ChownTo {
+    #[builder(init_required)]
+    #[arg(positional, each = plain)]
+    owner: std::ffi::OsString,
+    #[builder(init_required)]
+    #[arg(positional)]
+    path: std::ffi::OsString,
+}
+
+/// `hostname`: its own root, nothing after the program.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(program = "hostname")]
+struct Hostname;
+
+/// `ssh ... root@HOST`, its own root, with a setter of its own and 255 named.
+#[derive(SimpleSubCommand, Debug, Clone, Default)]
+#[subcommand(program = "ssh")]
+#[exit_status(code = 255, word = "the login or the connection failed")]
+struct Login {
+    #[arg(kv = "-o")]
+    options: Vec<std::ffi::OsString>,
+    #[builder(init_required)]
+    #[arg(positional)]
+    to: std::ffi::OsString,
+}
+
+let stop = Systemctl::stop().units(["a.service", "b.service"]);
+assert_eq!(stop.build_display(), "systemctl stop a.service b.service");
+stop.validate().unwrap();
+let err = Systemctl::stop().validate().unwrap_err();
+assert_eq!(err.field(), Some("units"));
+assert!(Systemctl::stop().units(["--all"]).validate().unwrap_err().to_string().contains("not a plain units"));
+
+let check = Systemctl::is_active("a.service");
+assert_eq!(check.ok_codes(), &[0]);
+assert_eq!(check.exit_status_of(Some(3)), Some(ExitStatusWord::rejected(3, "inactive")));
+assert_eq!(Systemctl::daemon_reload().build_display(), "systemctl daemon-reload");
+
+assert_eq!(Chown::to("a:b", "/x").build_display(), "chown a:b /x");
+assert!(Chown::to("-R", "/x").validate().is_err());
+
+assert_eq!(Hostname.build_display(), "hostname");
+let login = Login::new("root@h").options(["BatchMode=yes", "ConnectTimeout=8"]);
+assert_eq!(login.build_display(), "ssh -o BatchMode=yes -o ConnectTimeout=8 root@h");
+assert_eq!(login.exit_status_of(Some(255)).map(|s| s.word), Some("the login or the connection failed"));
+assert_eq!(login.ok_codes(), &[0]);
+```
+
 ## The vocabulary
 
 Every attribute is parsed against one schema. A misspelt key is refused at
@@ -506,17 +612,24 @@ The flag pushed when that variant is selected. A variant without one pushes noth
 
 | attribute | meaning |
 |---|---|
-| `#[subcommand(segment = "add")]` | the subcommand word; required |
+| `#[subcommand(segment = "add")]` | the subcommand word; required unless `no_segment` or `program` is given |
+| `#[subcommand(no_segment)]` | no word of its own: the fields come right after the root's program (`chown OWNER PATH`) |
+| `#[subcommand(program = "hostname")]` | the leaf is its own root: it runs `program`, then its segment if it has one, then its fields, with no `CompositeShell`, and has its setters itself |
 | `#[arg(flag = "--x")]` | a bool pushed as the flag |
-| `#[arg(kv = "--x")]` | `--x value`, an `Option` only when `Some` |
-| `#[arg(positional)]` | the value as a bare argument |
+| `#[arg(kv = "--x")]` | `--x value`, an `Option` only when `Some`, a `Vec` as `--x value` per value |
+| `#[arg(positional)]` | the value as a bare argument, a `Vec` as one argument per value; a `Vec`'s setter takes any list and adds it to the values already there |
+| `#[arg(each = path::to::fn)]` or `each = "expr"` | a check on the value, or on every value of an `Option` or a `Vec`: `fn(&str, &OsStr) -> CommandValidationResult`, given the field's name and the value |
+| `#[arg(min = 1)]` | the fewest values a `Vec` field takes |
+| `#[exit_status(code = 3, word = "inactive")]`, `accepted`, `accepted = false` | a status the command names, once per status: read back through `exit_statuses()` and `exit_status_of(code)`, and as rules through xccute_runtime's `ExitStatusPolicy::of(&command)`. 0 is accepted unless a status says otherwise; another code only when its status says `accepted` |
 | `#[builder(method = "name", into, init_required)]` | the setter's name; `impl Into<_>`; a `new()` argument with no setter |
 | `#[requires("f")]`, `#[invalid_without("f")]`, `#[only_pair_with("f")]`, `#[conflicts_with("f")]` | field rules, checked by `validate()` |
 | `#[one_of("a", "b")]`, `#[at_least_one_of("a", "b")]` | struct rules over a set of fields |
 | `#[validate(with = "path::to::fn")]` | a preflight hook `fn(&Self) -> CommandValidationResult`, on the struct or a field |
 | `#[xccute_policy(sensitive, requires_sudo, iam_scope = "..", path_role = "..", dry_run_default = false)]` | metadata read back through `XccutePolicyMetadata` |
 
-One of `flag`, `kv`, `positional` per field.
+One of `flag`, `kv`, `positional` per field. A unit struct is a line with no
+arguments. `#[builder(init_required)]` takes one value, so a `Vec` field is
+filled by its setter.
 
 ### `CompositeShell` and `CompositeSubCommand`
 

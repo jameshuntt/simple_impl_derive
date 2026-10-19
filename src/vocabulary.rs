@@ -127,9 +127,36 @@ pub(crate) fn shell_variant() -> AttrSchema {
     AttrSchema::new().optional("flag", K::String).doc("flag", "pushed when this variant is selected")
 }
 
-/// `#[subcommand(...)]` on a SimpleSubCommand or CompositeSubCommand struct.
+/// `#[subcommand(...)]` on a CompositeSubCommand struct.
 pub(crate) fn subcommand() -> AttrSchema {
     AttrSchema::new().required("segment", K::String).doc("segment", "the subcommand word")
+}
+
+/// `#[subcommand(...)]` on a SimpleSubCommand struct: [`subcommand`]'s
+/// segment, which a line with no word of its own or a leaf with its own
+/// program may leave out. `segment_required` is whether this attribute says
+/// neither, so a missing segment is still reported as it always was.
+pub(crate) fn simple_subcommand(segment_required: bool) -> AttrSchema {
+    let schema = AttrSchema::new();
+    let schema = if segment_required { schema.required("segment", K::String) } else { schema.optional("segment", K::String) };
+    schema
+        .doc("segment", "the subcommand word")
+        .optional("no_segment", K::Bool)
+        .doc("no_segment", "the line has no word of its own: its fields come right after the root's program (chown OWNER PATH)")
+        .optional("program", K::String)
+        .doc("program", "the leaf is its own root and runs this program, with no CompositeShell (hostname, or systemctl with segment = \"stop\")")
+        .conflicts("segment", "no_segment")
+}
+
+/// `#[exit_status(...)]` on a SimpleSubCommand struct, once per status.
+pub(crate) fn exit_status() -> AttrSchema {
+    AttrSchema::new()
+        .required("code", K::Int)
+        .doc("code", "the exit status")
+        .required("word", K::String)
+        .doc("word", "the program's word for it, the reason an exit-status policy gives")
+        .optional("accepted", K::Bool)
+        .doc("accepted", "whether the line goes on after it; when absent, 0 is accepted and any other code is not")
 }
 
 /// `#[builder(...)]` on a field of a SimpleSubCommand struct.
@@ -151,10 +178,16 @@ pub(crate) fn subcommand_arg() -> AttrSchema {
         .optional("kv", K::String)
         .doc("kv", "`flag value` for the field")
         .optional("positional", K::Bool)
-        .doc("positional", "the field's value as a bare argument")
+        .doc("positional", "the field's value as a bare argument; a Vec field gives one argument per value, a kv Vec field `flag value` per value")
+        .optional("each", K::Any)
+        .doc("each", "a check on the value, or on every value of an Option or a Vec: fn(&str, &OsStr) -> CommandValidationResult given the field's name and the value, written as code or as a string")
+        .optional("min", K::Int)
+        .doc("min", "the fewest values a Vec field takes")
         .conflicts("flag", "kv")
         .conflicts("flag", "positional")
         .conflicts("kv", "positional")
+        .conflicts("flag", "each")
+        .conflicts("flag", "min")
 }
 
 /// `#[xccute_policy(...)]` on a SimpleSubCommand or CompositeSubCommand struct.
@@ -187,7 +220,7 @@ mod tests {
 
     #[test]
     fn every_schema_documents_every_key() {
-        for schema in [shell_struct(), shell_field(), builder_field(), shell_variant(), subcommand(), subcommand_builder(), subcommand_arg(), xccute_policy()] {
+        for schema in [shell_struct(), shell_field(), builder_field(), shell_variant(), subcommand(), simple_subcommand(true), simple_subcommand(false), exit_status(), subcommand_builder(), subcommand_arg(), xccute_policy()] {
             every_key_documented(&schema);
         }
     }

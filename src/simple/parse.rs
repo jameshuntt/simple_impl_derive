@@ -347,7 +347,7 @@ fn order_target(inner: &AttrBag, key: &str) -> Option<(String, Span)> {
 /// (reported into `errs`). Code is emitted with the tokens as written, so an
 /// error the compiler finds inside it points at the attribute; a string is
 /// parsed as before.
-fn read_expr(bag: &AttrBag, key: &str, errs: &mut SynBuffer) -> Option<Option<TokenStream2>> {
+pub(crate) fn read_expr(bag: &AttrBag, key: &str, errs: &mut SynBuffer) -> Option<Option<TokenStream2>> {
     let value = bag.get(key)?;
     let span = bag.span_of(key).unwrap_or_else(Span::call_site);
     let expr = match value {

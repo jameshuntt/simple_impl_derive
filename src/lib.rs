@@ -53,8 +53,8 @@ pub fn derive_simple_shell_mode(input: TokenStream) -> TokenStream {
 }
 
 
-/// A leaf argv command under a root: `#[subcommand(segment = "..")]`, `#[arg(..)]` fields, validation rules, `#[xccute_policy(..)]`.
-#[proc_macro_derive(SimpleSubCommand, attributes(subcommand, builder, arg, validate, requires, invalid_without, only_pair_with, conflicts_with, one_of, at_least_one_of, xccute_policy))]
+/// A leaf argv command under a root, or its own root with `program`: `#[subcommand(segment = "..")]`, `#[arg(..)]` fields, validation rules, `#[exit_status(..)]`, `#[xccute_policy(..)]`.
+#[proc_macro_derive(SimpleSubCommand, attributes(subcommand, builder, arg, validate, requires, invalid_without, only_pair_with, conflicts_with, one_of, at_least_one_of, xccute_policy, exit_status))]
 pub fn derive_simple_subcommand(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match simple_subcommand::expand_simple_subcommand(&input) {
